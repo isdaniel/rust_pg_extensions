@@ -1,0 +1,5 @@
+comment = 'all_in_one_lib:  Created by pgx'
+default_version = '@CARGO_VERSION@'
+module_pathname = '$libdir/all_in_one_lib'
+relocatable = false
+superuser = true
