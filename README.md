@@ -1,2 +1,22 @@
 # rust_pg_extensions
-rust_pg_extensions lib
+
+```
+drop extension if exists all_in_one_lib cascade;
+create extension all_in_one_lib;
+```
+
+data_encrypt & data_decrypt example.
+
+```
+all_in_one_lib=# SELECT data_encrypt('01234567890123456789012345678901', 'hello world!!');
+                         data_encrypt                         
+--------------------------------------------------------------
+ \x9cb017fde9c75f5d884e42253c0784ec0935106550e3735f662e0c0756
+(1 row)
+
+all_in_one_lib=# SELECT data_decrypt('01234567890123456789012345678901','\x9cb017fde9c75f5d884e42253c0784ec0935106550e3735f662e0c0756');
+ data_decrypt  
+---------------
+ hello world!!
+(1 row)
+```

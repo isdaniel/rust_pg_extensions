@@ -17,7 +17,6 @@ use aes_gcm::{
 };
 use base64::{Engine as _, engine::general_purpose};
 
-
 #[pg_extern]
 fn compute_hash(input: &str,hash_type:&str) -> String{
     let mut hasher:Box<dyn DynDigest>= match hash_type.to_lowercase().as_str() {
@@ -32,25 +31,24 @@ fn compute_hash(input: &str,hash_type:&str) -> String{
 }
 
 #[pg_extern]
-fn data_encrypt(key: &[u8], plaintext: &str) -> String{
+fn data_encrypt(key: &[u8], plaintext: &str) -> Vec<u8> {
     let cipher = Aes256Gcm::new(GenericArray::from_slice(key));
-    let nonce_bytes: [u8; 12] = [
+    let nonce_bytes = [
         0x6a, 0x3d, 0x1f, 0xb8, 0x4e, 0x7a, 
         0x93, 0x2d, 0x5f, 0x7c, 0x82, 0x1b
     ];
     let nonce = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher.encrypt(nonce, plaintext.as_bytes()).unwrap();
-    general_purpose::STANDARD.encode(ciphertext)
+    cipher.encrypt(nonce, plaintext.as_bytes()).unwrap()
 }
 
 #[pg_extern]
-fn data_decrypt(key: &[u8], ciphertext: &str) -> String{
-    let nonce: [u8; 12]= [
+fn data_decrypt(key: &[u8], cipher_buffer: &[u8]) -> String{
+    let nonce= [
         0x6a, 0x3d, 0x1f, 0xb8, 0x4e, 0x7a, 
         0x93, 0x2d, 0x5f, 0x7c, 0x82, 0x1b
     ];
-    let cipher_buffer = general_purpose::STANDARD.decode(ciphertext).expect("Base64 decode failed...");
+    
     let cipher = Aes256Gcm::new(GenericArray::from_slice(key));
     let nonce = Nonce::from_slice(&nonce);
-    String::from_utf8(cipher.decrypt(nonce, cipher_buffer.as_slice()).expect("Decryption failed")).unwrap()
+    String::from_utf8(cipher.decrypt(nonce, cipher_buffer).expect("Decryption failed")).unwrap()
 }
