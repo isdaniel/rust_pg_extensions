@@ -1,6 +1,13 @@
 # rust_pg_extensions
 
 ```
+cargo install --locked cargo-pgrx
+cargo pgrx init
+cargo pgrx run pg13
+```
+
+
+```
 drop extension if exists all_in_one_lib cascade;
 create extension all_in_one_lib;
 ```

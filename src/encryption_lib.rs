@@ -1,6 +1,6 @@
 use aes_gcm::KeyInit;
 use md5::digest::DynDigest;
-use pgx::*;
+use pgrx::*;
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::Sha256;

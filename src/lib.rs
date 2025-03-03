@@ -1,8 +1,6 @@
-use pgx::prelude::*;
-
+mod my_wal_decoder;
 mod encryption_lib;
-pgx::pg_module_magic!();
-
+::pgrx::pg_module_magic!();
 
 #[cfg(any(test, feature = "pg_test"))]
 #[pg_schema]
