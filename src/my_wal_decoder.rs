@@ -3,6 +3,7 @@ use pgrx::prelude::*;
 use serde::ser::{SerializeStruct, Serializer};
 use serde::Serialize;
 use std::alloc::{alloc, dealloc, Layout};
+use std::os::raw;
 
 #[derive(Serialize)]
 struct Action {
@@ -168,6 +169,7 @@ impl Serialize for Tuple {
             if isnull {
                 continue;
             }
+
             match attribute.atttypid {
                 pg_sys::INT4OID => {
                     let value = unsafe { i32::from_datum(datum, isnull) };
@@ -194,6 +196,7 @@ pub unsafe extern "C" fn _PG_output_plugin_init(cb_ptr: *mut pg_sys::OutputPlugi
     callbacks.begin_cb = Some(pg_decode_begin_txn);
     callbacks.change_cb = Some(pg_decode_change);
     callbacks.commit_cb = Some(pg_decode_commit_txn);
+    callbacks.message_cb = Some(pg_decode_messgae);
     callbacks.shutdown_cb = Some(pg_decode_shutdown);
     callbacks.into_pg();
     debug1!("Anon: output plugin initialized");
@@ -204,6 +207,43 @@ pub unsafe extern "C" fn _PG_output_plugin_init(cb_ptr: *mut pg_sys::OutputPlugi
 // The complete list of callbacks is available at:
 // https://www.postgresql.org/docs/current/logicaldecoding-output-plugin.html
 //
+
+#[pg_guard]
+unsafe extern "C" fn pg_decode_messgae(
+    ctx_ptr: *mut pg_sys::LogicalDecodingContext, 
+    txn_ptr: *mut pg_sys::ReorderBufferTXN, 
+    message_lsn: pg_sys::XLogRecPtr, 
+    transactional: bool, 
+    prefix: *const raw::c_char, 
+    message_size: pg_sys::Size, 
+    message: *const raw::c_char
+) {
+    unsafe {
+        // Convert C string to Rust String
+        let prefix = std::ffi::CStr::from_ptr(prefix).to_string_lossy();
+        let message_slice = std::slice::from_raw_parts(message as *const u8, message_size);
+        let message_str = String::from_utf8_lossy(message_slice);
+
+        info!("Received logical decoding message: prefix={} message={}", prefix, message_str);
+
+        // Get output buffer
+        let ctx_ref = ctx_ptr.as_mut().unwrap();
+
+        // Prepare to write output to the replication stream
+        pg_sys::OutputPluginPrepareWrite(ctx_ptr, false);
+
+        // Convert Rust strings to C strings for appendStringInfo
+        let msg_prefix_cstr = std::ffi::CString::new(format!("LOGICAL_MESSAGE: {} ", prefix)).unwrap();
+        let message_cstr = std::ffi::CString::new(message_str.to_string()).unwrap();
+
+        // Append formatted message
+        pg_sys::appendStringInfo(ctx_ref.out, msg_prefix_cstr.as_ptr());
+        pg_sys::appendStringInfo(ctx_ref.out, message_cstr.as_ptr());
+
+        // Write output to stream
+        pg_sys::OutputPluginWrite(ctx_ptr, true);
+    }
+}
 
 #[pg_guard]
 unsafe extern "C" fn pg_decode_startup(
@@ -276,10 +316,10 @@ unsafe extern "C" fn pg_decode_shutdown(ctx_ptr: *mut pg_sys::LogicalDecodingCon
 #[pg_schema]
 mod tests {
     use pgrx::prelude::*;
+    use crate::my_wal_decoder::Action;
 
     #[pg_test]
     fn test_action_begin() {
-        use crate::Action;
 
         let input = Action::begin();
         let json = serde_json::to_string(&input).expect("Serde Error");
