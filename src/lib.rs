@@ -1,12 +1,15 @@
 mod my_wal_decoder;
-mod encryption_lib;
+mod utility_lib;
+mod networking_lib;
+
+use pgrx::pg_schema;
 ::pgrx::pg_module_magic!();
 
 #[cfg(any(test, feature = "pg_test"))]
 #[pg_schema]
 mod tests {
-    use pgx::prelude::*;
-    use crate::encryption_lib::{compute_hash,data_decrypt,data_encrypt};
+    use pgrx::prelude::*;
+    use crate::utility_lib::{compute_hash,data_decrypt,data_encrypt};
 
     #[pg_test]
     fn test_md5_hashing() {
