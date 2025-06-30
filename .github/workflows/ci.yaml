@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        pg-version: [12, 13, 14, 15, 16, 17]
+      fail-fast: false
+
+    env:
+      PG_VER: ${{ matrix.pg-version }}
+
+    steps:
+    - name: Checkout source code
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: actions/setup-rust@v1
+      with:
+        rust-version: stable
+
+    - name: Install PostgreSQL ${{ matrix.pg-version }}
+      run: |
+        sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+        wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+        sudo apt-get update
+        sudo apt-get install -y postgresql-${{ env.PG_VER }} postgresql-server-dev-${{ env.PG_VER }}
+        sudo systemctl start postgresql
+
+    - name: Install cargo-pgrx
+      run: cargo install --locked cargo-pgrx
+
+    - name: Test with PostgreSQL ${{ env.PG_VER }}
+      run: cargo pgrx test --release --pg-config=/usr/lib/postgresql/${{ env.PG_VER }}/bin/pg_config
+
+    - name: Package with PostgreSQL ${{ env.PG_VER }}
+      run: cargo pgrx package --pg-config=/usr/lib/postgresql/${{ env.PG_VER }}/bin/pg_config
