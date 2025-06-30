@@ -33,14 +33,19 @@ jobs:
           sudo apt-get install -y postgresql-${{ env.PG_VER }} postgresql-server-dev-${{ env.PG_VER }}
           sudo systemctl start postgresql
 
+      - name: Report version
+        run: |
+          cargo --version
+          pg_config --version
+
       - name: Install cargo-pgrx
         run: cargo install cargo-pgrx --version 0.13.1 --locked
         
-      - name: Initialize pgrx
-        run: cargo pgrx init --pg${{ env.PG_VER }}
+      - name: cargo pgrx init
+        run: cargo pgrx init --pg${{ env.PG_VER }}=$(which pg_config)
 
       - name: Test with PostgreSQL ${{ env.PG_VER }}
         run: cargo pgrx test --release
 
       - name: Package with PostgreSQL ${{ env.PG_VER }}
-        run: cargo pgrx package --pg-config=/usr/lib/postgresql/${{ env.PG_VER }}/bin/pg_config
+        run: cargo pgrx package --pg-config=$(which pg_config)
