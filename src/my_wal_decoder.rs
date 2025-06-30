@@ -6,7 +6,7 @@ use std::alloc::{alloc, dealloc, Layout};
 use std::os::raw;
 
 #[derive(Serialize)]
-struct Action {
+pub struct Action {
     typ: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     committed: Option<i64>,
@@ -191,7 +191,7 @@ impl Serialize for Tuple {
 #[no_mangle]
 #[pg_guard]
 pub unsafe extern "C" fn _PG_output_plugin_init(cb_ptr: *mut pg_sys::OutputPluginCallbacks) {
-    let mut callbacks = unsafe { PgBox::from_pg(cb_ptr) };
+    let mut callbacks: PgBox<pg_sys::OutputPluginCallbacks> = unsafe { PgBox::from_pg(cb_ptr) };
     callbacks.startup_cb = Some(pg_decode_startup);
     callbacks.begin_cb = Some(pg_decode_begin_txn);
     callbacks.change_cb = Some(pg_decode_change);
@@ -324,16 +324,5 @@ mod tests {
         let input = Action::begin();
         let json = serde_json::to_string(&input).expect("Serde Error");
         assert_eq!(json, r#"{"typ":"BEGIN"}"#);
-    }
-
-    #[pg_test]
-    #[ignore]
-    fn test_callbacks() {
-        //
-        // Not sure how to handle the tests of the callbacks....
-        // This function is running *inside* a transaction
-        // and the WAL decoder will output the changes only when they are
-        // committed.
-        //
     }
 }
