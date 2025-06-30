@@ -46,7 +46,7 @@ jobs:
         run: cargo pgrx init --pg${{ env.PG_VER }}=${{ env.PG_BIN }}/pg_config
 
       - name: Run Tests for PostgreSQL ${{ env.PG_VER }}
-        run: cargo pgrx test --release --pg${{ env.PG_VER }}
+        run: cargo pgrx test --release pg${{ env.PG_VER }}
 
       - name: Package for PostgreSQL ${{ env.PG_VER }}
         run: cargo pgrx package --release --pg-config=${{ env.PG_BIN }}/pg_config
