@@ -37,7 +37,7 @@ jobs:
         run: cargo install --locked cargo-pgrx
 
       - name: Test with PostgreSQL ${{ env.PG_VER }}
-        run: cargo pgrx test --pg-config=/usr/lib/postgresql/${{ env.PG_VER }}/bin/pg_config
+        run: cargo pgrx test --release
 
       - name: Package with PostgreSQL ${{ env.PG_VER }}
         run: cargo pgrx package --pg-config=/usr/lib/postgresql/${{ env.PG_VER }}/bin/pg_config
