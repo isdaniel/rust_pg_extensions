@@ -17,13 +17,14 @@ jobs:
 
     env:
       PG_VER: ${{ matrix.pg-version }}
+      PG_BIN: /usr/lib/postgresql/${{ matrix.pg-version }}/bin
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v11-pgrx-test"
-
 
       - name: Install PostgreSQL ${{ matrix.pg-version }}
         run: |
@@ -33,19 +34,19 @@ jobs:
           sudo apt-get install -y postgresql-${{ env.PG_VER }} postgresql-server-dev-${{ env.PG_VER }}
           sudo systemctl start postgresql
 
-      - name: Report version
+      - name: Report versions
         run: |
           cargo --version
-          pg_config --version
+          ${{ env.PG_BIN }}/pg_config --version
 
       - name: Install cargo-pgrx
         run: cargo install cargo-pgrx --version 0.13.1 --locked
-        
-      - name: cargo pgrx init
-        run: cargo pgrx init --pg${{ env.PG_VER }}=$(which pg_config)
 
-      - name: Test with PostgreSQL ${{ env.PG_VER }}
-        run: cargo pgrx test --release
+      - name: Initialize pgrx for PostgreSQL ${{ env.PG_VER }}
+        run: cargo pgrx init --pg${{ env.PG_VER }}=${{ env.PG_BIN }}/pg_config
 
-      - name: Package with PostgreSQL ${{ env.PG_VER }}
-        run: cargo pgrx package --pg-config=$(which pg_config)
+      - name: Run Tests for PostgreSQL ${{ env.PG_VER }}
+        run: cargo pgrx test --release --pg${{ env.PG_VER }}
+
+      - name: Package for PostgreSQL ${{ env.PG_VER }}
+        run: cargo pgrx package --release --pg-config=${{ env.PG_BIN }}/pg_config
