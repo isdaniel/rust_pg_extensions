@@ -35,6 +35,9 @@ jobs:
 
       - name: Install cargo-pgrx
         run: cargo install cargo-pgrx --version 0.13.1 --locked
+        
+      - name: Initialize pgrx
+        run: cargo pgrx init --pg${{ env.PG_VER }}
 
       - name: Test with PostgreSQL ${{ env.PG_VER }}
         run: cargo pgrx test --release
