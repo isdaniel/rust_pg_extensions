@@ -34,7 +34,7 @@ jobs:
           sudo systemctl start postgresql
 
       - name: Install cargo-pgrx
-        run: cargo install --locked cargo-pgrx
+        run: cargo install cargo-pgrx --version 0.13.1 --locked
 
       - name: Test with PostgreSQL ${{ env.PG_VER }}
         run: cargo pgrx test --release
