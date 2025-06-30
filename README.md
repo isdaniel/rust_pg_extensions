@@ -27,3 +27,24 @@ all_in_one_lib=# SELECT data_decrypt('01234567890123456789012345678901','\x9cb01
  hello world!!
 (1 row)
 ```
+
+## FDW
+
+```
+create foreign data wrapper default_wrapper
+  handler default_fdw_handler;
+  
+create server my_default_server
+  foreign data wrapper default_wrapper
+  options (
+    foo 'bar'
+  );
+
+create foreign table hello (
+  id bigint,
+  col text
+)
+server my_default_server options (
+	foo 'bar'
+);
+```

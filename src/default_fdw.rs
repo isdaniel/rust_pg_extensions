@@ -2,9 +2,47 @@ use pgrx::pg_sys;
 use pgrx::pg_sys::Datum;
 use pgrx::prelude::*;
 use pgrx::PgMemoryContexts;
+use std::collections::HashMap;
+use std::ffi::CStr;
 use std::ffi::CString;
 use pgrx::AllocatedByRust;
 use std::ptr;
+
+unsafe fn get_foreign_table_options(relid: pg_sys::Oid) -> HashMap<String, String> {
+    let mut options = HashMap::new();
+
+    // Get ForeignTable
+    let ft = pg_sys::GetForeignTable(relid);
+    if ft.is_null() {
+        return options;
+    }
+
+    // ft->options is a List of DefElem *
+    let opts_list = (*ft).options;
+
+    let list_len = pg_sys::list_length(opts_list);
+    
+    for i in 0..list_len {
+        let def_elem: *mut pg_sys::DefElem = pg_sys::list_nth(opts_list, i as i32) as *mut pg_sys::DefElem;
+        
+        if def_elem.is_null() {
+            continue;
+        }
+
+        let def_name_cstr = CStr::from_ptr((*def_elem).defname);
+        let def_name = def_name_cstr.to_str().unwrap_or_default();
+
+        let def_val_node = (*def_elem).arg;
+        if !def_val_node.is_null() && (*def_val_node).type_ == pg_sys::NodeTag::T_String {
+            let val_value = def_val_node as *mut pg_sys::Value;
+            let val_cstr = CStr::from_ptr((*val_value).val.str_);
+            let val = val_cstr.to_str().unwrap_or_default();
+            options.insert(def_name.to_string(), val.to_string());
+        }
+    }
+
+    options
+}
 
 #[pg_extern(create_or_replace)]
 pub extern "C" fn default_fdw_handler() -> PgBox<pg_sys::FdwRoutine> {
@@ -12,36 +50,20 @@ pub extern "C" fn default_fdw_handler() -> PgBox<pg_sys::FdwRoutine> {
     log!("---> default_fdw_handler");
     unsafe {
         let mut fdw_routine = PgBox::<pg_sys::FdwRoutine, AllocatedByRust>::alloc_node(pg_sys::NodeTag::T_FdwRoutine);
-
-        fdw_routine.BeginForeignScan = Some(begin_foreign_scan);
-        fdw_routine.IterateForeignScan = Some(iterate_foreign_scan);
-        fdw_routine.EndForeignScan = Some(end_foreign_scan);
+        fdw_routine.ImportForeignSchema = Some(import_foreign_schema);
 
         fdw_routine.GetForeignRelSize = Some(get_foreign_rel_size);
         fdw_routine.GetForeignPaths = Some(get_foreign_paths);
         fdw_routine.GetForeignPlan = Some(get_foreign_plan);
+        fdw_routine.ExplainForeignScan = Some(explain_foreign_scan);
+
+        // scan phase
+        fdw_routine.BeginForeignScan = Some(begin_foreign_scan);
+        fdw_routine.IterateForeignScan = Some(iterate_foreign_scan);
+        fdw_routine.ReScanForeignScan = Some(re_scan_foreign_scan);
+        fdw_routine.EndForeignScan = Some(end_foreign_scan); 
 
         fdw_routine.into_pg_boxed()
-
-
-        // let mut fdw_routine =
-        //         FdwRoutine::<AllocatedByRust>::allocnode(pg_sys::NodeTag::T_FdwRoutine);
-
-        //     // import foreign schema
-        //     fdw_routine.ImportForeignSchema =
-        //         Some(import_foreign_schema::import_foreign_schema::<E, Self>);
-
-        //     // plan phase
-        //     fdw_routine.GetForeignRelSize = Some(scan::get_foreign_rel_size::<E, Self>);
-        //     fdw_routine.GetForeignPaths = Some(scan::get_foreign_paths::<E, Self>);
-        //     fdw_routine.GetForeignPlan = Some(scan::get_foreign_plan::<E, Self>);
-        //     fdw_routine.ExplainForeignScan = Some(scan::explain_foreign_scan::<E, Self>);
-
-        //     // scan phase
-        //     fdw_routine.BeginForeignScan = Some(scan::begin_foreign_scan::<E, Self>);
-        //     fdw_routine.IterateForeignScan = Some(scan::iterate_foreign_scan::<E, Self>);
-        //     fdw_routine.ReScanForeignScan = Some(scan::re_scan_foreign_scan::<E, Self>);
-        //     fdw_routine.EndForeignScan = Some(scan::end_foreign_scan::<E, Self>);
 
         //     // modify phase
         //     fdw_routine.AddForeignUpdateTargets = Some(modify::add_foreign_update_targets);
@@ -55,6 +77,15 @@ pub extern "C" fn default_fdw_handler() -> PgBox<pg_sys::FdwRoutine> {
         //     Self::fdw_routine_hook(&mut fdw_routine);
         //     fdw_routine.into_pg_boxed()
     }
+}
+
+#[pg_guard]
+extern "C" fn import_foreign_schema(
+    _stmt: *mut pg_sys::ImportForeignSchemaStmt,
+    _server_oid: pg_sys::Oid,
+) -> *mut pg_sys::List {
+    log!("---> import_foreign_schema");
+    std::ptr::null_mut()
 }
 
 #[pg_guard]
@@ -119,12 +150,26 @@ extern "C" fn get_foreign_plan(
 }
 
 #[pg_guard]
+extern "C" fn explain_foreign_scan(
+    _node: *mut pg_sys::ForeignScanState,
+    _es: *mut pg_sys::ExplainState,
+) {
+    log!("---> explain_foreign_scan");
+    // You can add custom explanation logic here if needed
+}
+
+#[pg_guard]
 extern "C" fn begin_foreign_scan(
     node: *mut pg_sys::ForeignScanState,
     _eflags: ::std::os::raw::c_int,
 ) {
     log!("---> begin_foreign_scan");
     unsafe {
+        let relid = (*(*node).ss.ss_currentRelation).rd_id;
+        let options = get_foreign_table_options(relid);
+        log!("Foreign table options: {:?}", options);
+        //let host_port = options.get("host_port").map(|s| s.as_str()).unwrap_or("127.0.0.1:6379");
+
         let state = PgMemoryContexts::CurrentMemoryContext
             .leak_and_drop_on_delete(RedisFdwState { row: 0 });
 
@@ -195,10 +240,20 @@ extern "C" fn end_foreign_scan(
     }
 }
 
+#[pg_guard]
+extern "C" fn re_scan_foreign_scan(
+    _node: *mut pg_sys::ForeignScanState,
+) {
+    log!("---> re_scan_foreign_scan");
+    // Reset or reinitialize scan state here if needed
+}
+
 #[repr(C)]
 struct RedisFdwState {
     row: i32,
 }
+
+
 
 unsafe fn exec_clear_tuple(slot: *mut pg_sys::TupleTableSlot) {
     if let Some(clear) = (*(*slot).tts_ops).clear {
