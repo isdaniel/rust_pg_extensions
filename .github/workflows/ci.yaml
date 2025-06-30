@@ -18,14 +18,12 @@ jobs:
     env:
       PG_VER: ${{ matrix.pg-version }}
 
-    steps:
-    - name: Checkout source code
-      uses: actions/checkout@v4
-
-    - name: Install Rust
-      uses: actions/setup-rust@v1
+  steps:
+    - uses: actions/checkout@v4
+    - uses: Swatinem/rust-cache@v2
       with:
-        rust-version: stable
+        prefix-key: "v11-pgrx-test"
+
 
     - name: Install PostgreSQL ${{ matrix.pg-version }}
       run: |
