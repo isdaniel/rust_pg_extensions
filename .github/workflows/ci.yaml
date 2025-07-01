@@ -39,6 +39,10 @@ jobs:
           cargo --version
           ${{ env.PG_BIN }}/pg_config --version
 
+      - name: Chmod pg_config
+        run: |
+          sudo chmod +x ${{ env.PG_BIN }}/pg_config -R
+
       - name: Install cargo-pgrx
         run: cargo install cargo-pgrx --version 0.13.1 --locked
 
@@ -46,7 +50,7 @@ jobs:
         run: cargo pgrx init --pg${{ env.PG_VER }}=${{ env.PG_BIN }}/pg_config
 
       - name: Run Tests for PostgreSQL ${{ env.PG_VER }}
-        run: sudo cargo pgrx test --release pg${{ env.PG_VER }}
+        run: cargo pgrx test --release pg${{ env.PG_VER }}
 
       - name: Package for PostgreSQL ${{ env.PG_VER }}
-        run: sudo cargo pgrx package --release --pg-config=${{ env.PG_BIN }}/pg_config
+        run: cargo pgrx package --release --pg-config=${{ env.PG_BIN }}/pg_config
