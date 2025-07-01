@@ -41,7 +41,8 @@ jobs:
 
       - name: Chmod pg_config
         run: |
-          sudo chmod +x ${{ env.PG_BIN }}/pg_config -R
+          sudo chmod +x ${{ env.PG_BIN }} -R
+          sudo chmod 777 /usr/share/postgresql/${{ env.PG_VER }} -R
 
       - name: Install cargo-pgrx
         run: cargo install cargo-pgrx --version 0.13.1 --locked
