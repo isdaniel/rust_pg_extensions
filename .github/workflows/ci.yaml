@@ -52,10 +52,11 @@ jobs:
       #     sudo find / -name pg_config
 
 
-      # - name: Chmod pg_config
-      #   run: |
-      #     sudo chmod 777 /usr/share/postgresql/${{ env.PG_VER }} -R
-
+      - name: Chmod pg_config
+        run: |
+          sudo chmod 777 /usr/share/postgresql/${{ env.PG_VER }} -R
+          sudo chmod 777 /usr/lib/postgresql/${{ env.PG_VER }} -R
+          
       - name: Run Tests for PostgreSQL ${{ env.PG_VER }}
         run: cargo pgrx test --release pg${{ env.PG_VER }}
 
