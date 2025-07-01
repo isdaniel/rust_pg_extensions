@@ -40,10 +40,10 @@ jobs:
           sudo apt-get install -y postgresql-${{ env.PG_VER }} postgresql-server-dev-${{ env.PG_VER }}
           
       - name: Install cargo-pgrx
-        run: sudo cargo install cargo-pgrx 
+        run: cargo install cargo-pgrx 
 
       - name: Initialize pgrx for PostgreSQL ${{ env.PG_VER }}
-        run: sudo cargo pgrx init --pg${{ env.PG_VER }} ${{ env.PG_BIN }}/pg_config
+        run: cargo pgrx init --pg${{ env.PG_VER }} ${{ env.PG_BIN }}/pg_config
 
       # - name: Report versions
       #   run: |
@@ -57,7 +57,7 @@ jobs:
       #     sudo chmod 777 /usr/share/postgresql/${{ env.PG_VER }} -R
 
       - name: Run Tests for PostgreSQL ${{ env.PG_VER }}
-        run: sudo cargo pgrx test --release pg${{ env.PG_VER }}
+        run: cargo pgrx test --release pg${{ env.PG_VER }}
 
       # - name: Package for PostgreSQL ${{ env.PG_VER }}
       #   run: cargo pgrx package --release --pg-config=${{ env.PG_BIN }}/pg_config
