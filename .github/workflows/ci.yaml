@@ -45,7 +45,7 @@ jobs:
           sudo chmod 777 /usr/share/postgresql/${{ env.PG_VER }} -R
 
       - name: Install cargo-pgrx
-        run: cargo install cargo-pgrx --version 0.13.1 --locked
+        run: cargo install cargo-pgrx 
 
       - name: Initialize pgrx for PostgreSQL ${{ env.PG_VER }}
         run: cargo pgrx init --pg${{ env.PG_VER }}=${{ env.PG_BIN }}/pg_config
