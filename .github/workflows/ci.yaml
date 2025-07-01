@@ -33,15 +33,14 @@ jobs:
           sudo apt-get update
           echo "----- Install system dependencies -----"
           sudo apt-get install -y \
+            libreadline-dev \
+            zlib1g-dev \
+            flex \
+            bison \
             build-essential \
-            llvm-14-dev libclang-14-dev clang-14 \
-            gcc \
-            libssl-dev \
-            libz-dev \
-            make \
-            pkg-config \
-            strace \
-            zlib1g-dev
+            clang \
+            llvm \
+            ca-certificates
           echo ""
           sudo apt-get install -y postgresql-${{ env.PG_VER }} postgresql-server-dev-${{ env.PG_VER }}
           sudo systemctl start postgresql
