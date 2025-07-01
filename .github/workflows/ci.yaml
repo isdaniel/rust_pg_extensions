@@ -40,6 +40,7 @@ jobs:
           key: pgrx-${{ runner.os }}
 
   build-test:
+    needs: init-pgrx-postgresql
     runs-on: ubuntu-latest
 
     strategy:
