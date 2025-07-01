@@ -7,26 +7,12 @@ on:
     branches: [ main ]
 
 jobs:
-  build-test:
+  init-pgrx-postgresql:
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        pg-version: [ 13, 14, 15, 16]
-      fail-fast: false
-
-    env:
-      PG_VER: ${{ matrix.pg-version }}
-      PG_BIN: /usr/lib/postgresql/${{ matrix.pg-version }}/bin
-
     steps:
       - uses: actions/checkout@v4
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "v11-pgrx-test"
-
-      - name: Install PostgreSQL ${{ matrix.pg-version }}
+      - name: Install PostgreSQL APT repository and system dependencies
         run: |
           sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
           wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
@@ -42,27 +28,61 @@ jobs:
             llvm \
             ca-certificates
           echo ""
-          sudo apt-get install -y postgresql-${{ env.PG_VER }} postgresql-server-dev-${{ env.PG_VER }}
-          sudo systemctl start postgresql
-
-      - name: Report versions
-        run: |
-          cargo --version
-          ${{ env.PG_BIN }}/pg_config --version
-
-      - name: Chmod pg_config
-        run: |
-          sudo chmod +x ${{ env.PG_BIN }} -R
-          sudo chmod 777 /usr/share/postgresql/${{ env.PG_VER }} -R
-
+        
       - name: Install cargo-pgrx
-        run: cargo install cargo-pgrx 
+        run: cargo install cargo-pgrx
+      - name: Initialize pgrx
+        run: cargo pgrx init
+      - name: Cache pgrx
+        uses: actions/cache@v4
+        with:
+          path: ~/.pgrx
+          key: pgrx-${{ runner.os }}
 
-      - name: Initialize pgrx for PostgreSQL ${{ env.PG_VER }}
-        run: cargo pgrx init 
+  build-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        pg-version: [ 13, 14, 15, 16]
+      fail-fast: false
+
+    env:
+      PG_VER: ${{ matrix.pg-version }}
+      #PG_BIN: /usr/lib/postgresql/${{ matrix.pg-version }}/bin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v11-pgrx-test"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.pgrx
+          key: pgrx-${{ runner.os }}
+      
+      - name: Install PostgreSQL 
+        run: |
+          sudo apt-get install -y postgresql-${{ env.PG_VER }} postgresql-server-dev-${{ env.PG_VER }}
+      # - name: Report versions
+      #   run: |
+      #     cargo --version
+      #     ${{ env.PG_BIN }}/pg_config --version
+
+      # - name: Chmod pg_config
+      #   run: |
+      #     sudo chmod 777 /usr/share/postgresql/${{ env.PG_VER }} -R
+
+      # - name: Install cargo-pgrx
+      #   run: cargo install cargo-pgrx 
+
+      # - name: Initialize pgrx for PostgreSQL ${{ env.PG_VER }}
+      #   run: cargo pgrx init 
 
       - name: Run Tests for PostgreSQL ${{ env.PG_VER }}
         run: cargo pgrx test --release pg${{ env.PG_VER }}
 
-      - name: Package for PostgreSQL ${{ env.PG_VER }}
-        run: cargo pgrx package --release --pg-config=${{ env.PG_BIN }}/pg_config
+      # - name: Package for PostgreSQL ${{ env.PG_VER }}
+      #   run: cargo pgrx package --release --pg-config=${{ env.PG_BIN }}/pg_config
