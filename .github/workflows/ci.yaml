@@ -45,12 +45,10 @@ jobs:
       - name: Initialize pgrx for PostgreSQL ${{ env.PG_VER }}
         run: cargo pgrx init --pg${{ env.PG_VER }} ${{ env.PG_BIN }}/pg_config
 
-      # - name: Report versions
-      #   run: |
-      #     cargo --version
-      #     ${{ env.PG_BIN }}/pg_config --version
-      #     sudo find / -name pg_config
-
+      - name: Report versions
+        run: |
+          cargo --version
+          ${{ env.PG_BIN }}/pg_config --version
 
       - name: Chmod pg_config
         run: |
@@ -61,4 +59,4 @@ jobs:
         run: cargo pgrx test --release pg${{ env.PG_VER }}
 
       - name: Package for PostgreSQL ${{ env.PG_VER }}
-        run: cargo pgrx package --release --pg-config=${{ env.PG_BIN }}/pg_config
+        run: cargo pgrx package --pg-config=${{ env.PG_BIN }}/pg_config
