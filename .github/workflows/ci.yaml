@@ -54,11 +54,11 @@ jobs:
 
       - name: Initialize pgrx for PostgreSQL ${{ env.PG_VER }}
         run: |
-          cargo pgrx init --pg${{ env.PG_VER }} ${{ env.PG_BIN }}/pg_config
+          cargo pgrx init 
 
-      - name: Chmod pg_config
-        run: |
-          sudo chmod 777 /usr/share/postgresql/${{ env.PG_VER }} -R
+      # - name: Chmod pg_config
+      #   run: |
+      #     sudo chmod 777 /usr/share/postgresql/${{ env.PG_VER }} -R
 
       - name: Run Tests for PostgreSQL ${{ env.PG_VER }}
         run: cargo pgrx test --release pg${{ env.PG_VER }}
