@@ -12,7 +12,7 @@ jobs:
 
     strategy:
       matrix:
-        pg-version: [ 13, 14, 15, 16, 17]
+        pg-version: [ 13, 14, 15, 16]
       fail-fast: false
 
     env:

@@ -1,4 +1,3 @@
-use pgrx::pg_sys;
 use pgrx::pg_sys::Datum;
 use pgrx::prelude::*;
 use pgrx::PgMemoryContexts;
@@ -7,6 +6,34 @@ use std::ffi::CStr;
 use std::ffi::CString;
 use pgrx::AllocatedByRust;
 use std::ptr;
+
+#[cfg(any(feature = "pg13", feature = "pg14"))]
+use pg_sys::Value;
+
+
+#[cfg(any(feature = "pg13", feature = "pg14"))]
+unsafe fn get_str_from_pgvalue(val_value: *mut Value) -> String {
+    unsafe {
+        CStr::from_ptr((*val_value).val.str_)
+            .to_str()
+            .unwrap_or_default().to_string()
+    }
+}
+
+#[cfg(any(feature = "pg15", feature = "pg16"))] 
+#[repr(C)]
+pub struct Value {
+    pub type_: pg_sys::NodeTag,
+    pub val: pgrx::pg_sys::ValUnion,
+}
+
+
+#[cfg(any(feature = "pg15", feature = "pg16"))] 
+unsafe fn get_str_from_pgvalue(val_value: *mut Value) -> String {
+    unsafe {
+        (*val_value).val.sval.to_string()
+    }
+}
 
 pub unsafe fn get_foreign_table_options(relid: pg_sys::Oid) -> HashMap<String, String> {
     let mut options = HashMap::new();
@@ -38,12 +65,9 @@ pub unsafe fn get_foreign_table_options(relid: pg_sys::Oid) -> HashMap<String, S
 
         let def_val_node = (*def_elem).arg;
         if !def_val_node.is_null() && (*def_val_node).type_  == pg_sys::NodeTag::T_String {
-            let val_value = def_val_node as *mut pg_sys::Value;
-            let val = unsafe {
-                CStr::from_ptr((*val_value).val.str_)
-                    .to_str()
-                    .unwrap_or_default()
-            };
+            let val_value: *mut Value = def_val_node as *mut Value;
+            
+            let val = get_str_from_pgvalue(val_value);
             options.insert(def_name.to_string(), val.to_string());
         }
     }
