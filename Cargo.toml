@@ -12,17 +12,16 @@ path = "./src/bin/pgrx_embed.rs"
 
 [features]
 default = ["pg13"]
-pg12 = ["pgrx/pg12", "pgrx-tests/pg12" ]
-pg13 = ["pgrx/pg13", "pgrx-tests/pg13" ]
-pg14 = ["pgrx/pg14", "pgrx-tests/pg14" ]
-pg15 = ["pgrx/pg15", "pgrx-tests/pg15" ]
-pg16 = ["pgrx/pg16", "pgrx-tests/pg16" ]
-pg17 = ["pgrx/pg17", "pgrx-tests/pg17" ]
+pg13 = ["pgrx/pg13", "pgrx-tests/pg13"]
+pg14 = ["pgrx/pg14", "pgrx-tests/pg14"]
+pg15 = ["pgrx/pg15", "pgrx-tests/pg15"]
+pg16 = ["pgrx/pg16", "pgrx-tests/pg16"]
+pg17 = ["pgrx/pg17", "pgrx-tests/pg17"]
 pg_test = []
 
 [dependencies]
-pgrx = "0.13.1"
-pgrx-macros = "0.13.1"
+pgrx = { version ="0.15.0", default-features = false  }
+pgrx-macros = "0.15.0" 
 rand = "0.9.0"
 serde = "1.0.218"
 serde_json = "1.0.139"
@@ -33,10 +32,10 @@ hex = "0.4"
 aes-gcm = "0.10"  
 hostname = "0.4.1"
 get_if_addrs = "0.5"
-redis = "0.29.5"
+# redis = "0.29.5"
 
 [dev-dependencies]
-pgrx-tests = "=0.13.1"
+pgrx-tests = "0.15.0"
 
 [profile.dev]
 panic = "unwind"
