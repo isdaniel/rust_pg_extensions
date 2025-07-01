@@ -8,35 +8,42 @@ use std::ffi::CString;
 use pgrx::AllocatedByRust;
 use std::ptr;
 
-unsafe fn get_foreign_table_options(relid: pg_sys::Oid) -> HashMap<String, String> {
+pub unsafe fn get_foreign_table_options(relid: pg_sys::Oid) -> HashMap<String, String> {
     let mut options = HashMap::new();
 
-    // Get ForeignTable
     let ft = pg_sys::GetForeignTable(relid);
     if ft.is_null() {
         return options;
     }
 
-    // ft->options is a List of DefElem *
     let opts_list = (*ft).options;
+    if opts_list.is_null() {
+        return options;
+    }
 
-    let list_len = pg_sys::list_length(opts_list);
-    
-    for i in 0..list_len {
-        let def_elem: *mut pg_sys::DefElem = pg_sys::list_nth(opts_list, i as i32) as *mut pg_sys::DefElem;
+    let len = (*opts_list).length;
+    let cells = (*opts_list).elements;
+
+    for i in 0..len {
+        let cell_ptr = cells.offset(i as isize);
+        let def_elem =  (*cell_ptr).ptr_value as *mut pg_sys::DefElem;
         
         if def_elem.is_null() {
             continue;
         }
 
-        let def_name_cstr = CStr::from_ptr((*def_elem).defname);
-        let def_name = def_name_cstr.to_str().unwrap_or_default();
+        let def_name = CStr::from_ptr((*def_elem).defname)
+                .to_str()
+                .unwrap_or_default();
 
         let def_val_node = (*def_elem).arg;
-        if !def_val_node.is_null() && (*def_val_node).type_ == pg_sys::NodeTag::T_String {
+        if !def_val_node.is_null() && (*def_val_node).type_  == pg_sys::NodeTag::T_String {
             let val_value = def_val_node as *mut pg_sys::Value;
-            let val_cstr = CStr::from_ptr((*val_value).val.str_);
-            let val = val_cstr.to_str().unwrap_or_default();
+            let val = unsafe {
+                CStr::from_ptr((*val_value).val.str_)
+                    .to_str()
+                    .unwrap_or_default()
+            };
             options.insert(def_name.to_string(), val.to_string());
         }
     }
@@ -80,7 +87,7 @@ pub extern "C" fn default_fdw_handler() -> PgBox<pg_sys::FdwRoutine> {
 }
 
 #[pg_guard]
-extern "C" fn import_foreign_schema(
+extern "C-unwind" fn import_foreign_schema(
     _stmt: *mut pg_sys::ImportForeignSchemaStmt,
     _server_oid: pg_sys::Oid,
 ) -> *mut pg_sys::List {
@@ -89,7 +96,7 @@ extern "C" fn import_foreign_schema(
 }
 
 #[pg_guard]
-extern "C" fn get_foreign_rel_size(
+extern "C-unwind" fn get_foreign_rel_size(
     _root: *mut pg_sys::PlannerInfo,
     baserel: *mut pg_sys::RelOptInfo,
     _foreigntableid: pg_sys::Oid,
@@ -101,7 +108,7 @@ extern "C" fn get_foreign_rel_size(
 }
 
 #[pg_guard]
-extern "C" fn get_foreign_paths(
+extern "C-unwind" fn get_foreign_paths(
     _root: *mut pg_sys::PlannerInfo,
     baserel: *mut pg_sys::RelOptInfo,
     _foreigntableid: pg_sys::Oid,
@@ -125,7 +132,7 @@ extern "C" fn get_foreign_paths(
 }
 
 #[pg_guard]
-extern "C" fn get_foreign_plan(
+extern "C-unwind" fn get_foreign_plan(
     _root: *mut pg_sys::PlannerInfo,
     baserel: *mut pg_sys::RelOptInfo,
     _foreigntableid: pg_sys::Oid,
@@ -150,7 +157,7 @@ extern "C" fn get_foreign_plan(
 }
 
 #[pg_guard]
-extern "C" fn explain_foreign_scan(
+extern "C-unwind" fn explain_foreign_scan(
     _node: *mut pg_sys::ForeignScanState,
     _es: *mut pg_sys::ExplainState,
 ) {
@@ -159,7 +166,7 @@ extern "C" fn explain_foreign_scan(
 }
 
 #[pg_guard]
-extern "C" fn begin_foreign_scan(
+extern "C-unwind" fn begin_foreign_scan(
     node: *mut pg_sys::ForeignScanState,
     _eflags: ::std::os::raw::c_int,
 ) {
@@ -178,7 +185,7 @@ extern "C" fn begin_foreign_scan(
 }
 
 #[pg_guard]
-extern "C" fn iterate_foreign_scan(
+extern "C-unwind" fn iterate_foreign_scan(
     node: *mut pg_sys::ForeignScanState,
 ) -> *mut pg_sys::TupleTableSlot {
 
@@ -229,7 +236,7 @@ extern "C" fn iterate_foreign_scan(
 }
 
 #[pg_guard]
-extern "C" fn end_foreign_scan(
+extern "C-unwind" fn end_foreign_scan(
     node: *mut pg_sys::ForeignScanState,
 ) {
     log!("---> end_foreign_scan");
@@ -241,7 +248,7 @@ extern "C" fn end_foreign_scan(
 }
 
 #[pg_guard]
-extern "C" fn re_scan_foreign_scan(
+extern "C-unwind" fn re_scan_foreign_scan(
     _node: *mut pg_sys::ForeignScanState,
 ) {
     log!("---> re_scan_foreign_scan");
