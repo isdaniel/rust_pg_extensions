@@ -64,8 +64,22 @@ jobs:
           path: ~/.pgrx
           key: pgrx-${{ runner.os }}
       
-      - name: Install PostgreSQL 
+      - name: Install PostgreSQL APT repository and system dependencies
         run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          sudo apt-get update
+          echo "----- Install system dependencies -----"
+          sudo apt-get install -y \
+            libreadline-dev \
+            zlib1g-dev \
+            flex \
+            bison \
+            build-essential \
+            clang \
+            llvm \
+            ca-certificates
+          echo ""
           sudo apt-get install -y postgresql-${{ env.PG_VER }} postgresql-server-dev-${{ env.PG_VER }}
       # - name: Report versions
       #   run: |
