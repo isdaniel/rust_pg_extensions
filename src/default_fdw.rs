@@ -64,7 +64,7 @@ pub unsafe fn get_foreign_table_options(relid: pg_sys::Oid) -> HashMap<String, S
                 .unwrap_or_default();
 
         let def_val_node = (*def_elem).arg;
-        if !def_val_node.is_null() && (*def_val_node).type_  == pg_sys::NodeTag::T_String {
+        if !def_val_node.is_null() && (*def_val_node).type_ == pg_sys::NodeTag::T_String {
             let val_value: *mut Value = def_val_node as *mut Value;
             
             let val = get_str_from_pgvalue(val_value);
@@ -285,10 +285,42 @@ struct RedisFdwState {
 }
 
 
-
 unsafe fn exec_clear_tuple(slot: *mut pg_sys::TupleTableSlot) {
     if let Some(clear) = (*(*slot).tts_ops).clear {
         clear(slot);
     }
 }
 
+
+#[cfg(any(test, feature = "pg_test"))]
+#[pgrx::pg_schema] 
+mod tests {
+    use pgrx_macros::pg_test;
+    
+    #[cfg(any(feature = "pg13", feature = "pg14"))]
+    #[pg_test]
+    fn test_get_str_from_pgvalue_pg14() {
+        use std::ffi::CString;
+        use pgrx::pg_sys::{self};
+        use crate::default_fdw::get_str_from_pgvalue;
+
+        let cstr = CString::new("hello").unwrap();
+        let val = pg_sys::Value {
+            type_: pg_sys::NodeTag::T_String,
+            val: pg_sys::ValUnion { str_: cstr.as_ptr() as *mut i8 },
+        };
+        let result = unsafe { get_str_from_pgvalue(&val as *const _ as *mut _) };
+        assert_eq!(result, "hello");
+    }
+
+    #[cfg(any(feature = "pg15", feature = "pg16"))]
+    #[pg_test]
+    fn test_get_str_from_pgvalue_pg15() {
+        let val = Value {
+            type_: pg_sys::NodeTag::T_String,
+            val: pg_sys::ValUnion { sval: String::from("hello") },
+        };
+        let result = unsafe { get_str_from_pgvalue(&val as *const _ as *mut _) };
+        assert_eq!(result, "hello");
+    }
+}

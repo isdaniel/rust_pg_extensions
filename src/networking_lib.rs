@@ -19,3 +19,32 @@ pub fn get_server_ip() -> Vec<String> {
     }
     ips
 }
+
+
+#[cfg(any(test, feature = "pg_test"))]
+#[pgrx::pg_schema] 
+mod tests {
+    use pgrx_macros::pg_test;
+    use crate::networking_lib::*;
+    
+     #[pg_test]
+    fn test_get_server_hostname() {
+        let hostname = get_server_hostname();
+        
+        assert!(!hostname.is_empty(), "Hostname should not be empty");
+        assert_ne!(hostname, "Unknown", "Hostname should not be 'Unknown'");
+    }
+
+    #[pg_test]
+    fn test_get_server_ip() {
+        let ips = get_server_ip();
+        // It could be empty if there are no non-loopback interfaces, but we can check type
+        for ip in &ips {
+            assert!(
+                ip.parse::<std::net::IpAddr>().is_ok(),
+                "IP '{}' should be a valid IP address",
+                ip
+            );
+        }
+    }
+}
