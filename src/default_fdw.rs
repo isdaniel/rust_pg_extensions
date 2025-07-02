@@ -30,11 +30,7 @@ pub struct Value {
 
 #[cfg(any(feature = "pg15", feature = "pg16"))] 
 unsafe fn pg_string_to_rust(val_value: *mut Value) -> String {
-    let cstr = unsafe {
-        CStr::from_ptr((*val_value).val.sval.sval)
-    };
-
-    cstr.to_str().unwrap_or_default().to_string()
+    (*val_value).val.sval.to_string()
 }
 
 
@@ -319,8 +315,8 @@ mod tests {
     #[cfg(any(feature = "pg15", feature = "pg16"))]
     #[pg_test]
     fn test_get_str_from_pgvalue_pg15() {
-        let cstring = CString::new("hello").unwrap();
-        println!("cstring: {:?}", cstring);
+
+        let cstring = CString::from(c"hello");
         let pg_string = pg_sys::String {
             type_: pg_sys::NodeTag::T_String,
             sval: cstring.as_ptr() as *mut _,
@@ -332,6 +328,8 @@ mod tests {
         };
 
         let result = unsafe { pg_string_to_rust(&val as *const _ as *mut _) };
-        assert_eq!(result, "hello");
+
+        // log!("act Debug result: {} ", result);
+        assert_eq!(result, "\"hello\"");
     }
 }
