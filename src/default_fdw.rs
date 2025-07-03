@@ -1,9 +1,8 @@
-use pgrx::pg_sys::{Index, PlannerInfo, Oid, ModifyTable, Datum};
-use pgrx::{fcinfo, prelude::*, AllocatedByRust, PgMemoryContexts, PgTupleDesc};
+use pgrx::pg_sys::{AsPgCStr, Datum, Index, ModifyTable, Oid, PlannerInfo,MemoryContext};
+use pgrx::{fcinfo, prelude::*, AllocatedByRust, PgMemoryContexts, PgTupleDesc,};
 use std::fmt::Debug;
 use std::{collections::HashMap, ffi::{CStr, CString}, fmt, iter::Zip, num::NonZeroUsize, ptr, slice::Iter, sync::RwLock};
 use once_cell::sync::Lazy;
-
 type TableMap = HashMap<String, String>;
 static MEMORY_TABLE: Lazy<RwLock<Vec<TableMap>>> = Lazy::new(|| RwLock::new(Vec::new()));
 
@@ -116,9 +115,9 @@ extern "C-unwind" fn import_foreign_schema(
 
 #[pg_guard]
 extern "C-unwind" fn get_foreign_rel_size(
-    _root: *mut pg_sys::PlannerInfo,
+    root: *mut pg_sys::PlannerInfo,
     baserel: *mut pg_sys::RelOptInfo,
-    _foreigntableid: pg_sys::Oid,
+    foreigntableid: pg_sys::Oid,
 ) {
     log!("---> get_foreign_rel_size");
     unsafe {
@@ -194,14 +193,19 @@ extern "C-unwind" fn begin_foreign_scan(
         let relid = (*(*node).ss.ss_currentRelation).rd_id;
         let options = get_foreign_table_options(relid);
         log!("Foreign table options: {:?}", options);
-        let state = PgMemoryContexts::CurrentMemoryContext
-            .leak_and_drop_on_delete(RedisFdwState { 
-                row: 0 ,
-                values: Vec::new(),
-                nulls: Vec::new(),
-            });
 
-        (*node).fdw_state = state as *mut std::ffi::c_void;
+        let ctx_name = format!("Wrappers_scan_{}", relid.to_u32());
+        log!("Creating memory context: {}", ctx_name);
+        let ctx = create_wrappers_memctx(&ctx_name);
+        let state = RedisFdwState::new(ctx);
+        // let state = PgMemoryContexts::CurrentMemoryContext
+        //     .leak_and_drop_on_delete(RedisFdwState { 
+        //         row: 0 ,
+        //         values: Vec::new(),
+        //         nulls: Vec::new(),
+        //     });
+
+        (*node).fdw_state = Box::leak(Box::new(state)) as *mut RedisFdwState as *mut std::os::raw::c_void;
     }
 }
 
@@ -213,7 +217,8 @@ extern "C-unwind" fn iterate_foreign_scan(
     log!("---> iterate_foreign_scan");
 
     unsafe {
-        let state = &mut *((*node).fdw_state as *mut RedisFdwState);
+        //let state = &mut *((*node).fdw_state as *mut RedisFdwState);
+        let mut state = PgBox::<RedisFdwState>::from_pg((*node).fdw_state as _);
         let slot = (*node).ss.ss_ScanTupleSlot;
         let tupdesc = (*slot).tts_tupleDescriptor;
         let natts = (*tupdesc).natts as usize;
@@ -226,29 +231,44 @@ extern "C-unwind" fn iterate_foreign_scan(
 
         let tuple_row = &data[state.row as usize];
         log!("iterate_foreign_scan tuple_row: {:?}", tuple_row);
-        //tuple_table_slot_to_row(slot);
-        PgMemoryContexts::For((*slot).tts_mcxt).switch_to(|_|{
-            // let values_ptr =  ctx.palloc(std::mem::size_of::<pg_sys::Datum>() * natts) as *mut pg_sys::Datum;
-            // let nulls_ptr =  ctx.palloc(std::mem::size_of::<bool>() * natts) as *mut bool;
-          
-            for (col, val) in tuple_row.iter() {
-                log!("iterate_foreign_scan => Column: {}, Value: {}", col, val);
-                 let datum_data = match val.parse::<i32>() {
-                    Ok(i) => Cell::I32(i),
-                    Err(_) => Cell::String(val.clone()),
-                };
-                state.values.push(datum_data.into_datum().unwrap());
-                state.nulls.push(false);
-                // *values_ptr.add(i) = datum_data.into_datum().unwrap();
-                // *nulls_ptr.add(i) = false;
-            }
 
-            (*slot).tts_values = state.values.as_mut_ptr();
-            (*slot).tts_isnull = state.nulls.as_mut_ptr();
-            pg_sys::ExecStoreVirtualTuple(slot);
-        });
+        state.values.clear();
+        state.nulls.clear();
+        let attrs_ptr = (*tupdesc).attrs.as_ptr();
+        for i in 0..natts {
+            let attr = &*attrs_ptr.add(i);
+            let col_name = CStr::from_ptr(attr.attname.data.as_ptr())
+                .to_string_lossy()
+                .trim_end_matches('\0')
+                .to_string();
+
+            match tuple_row.get(&col_name) {
+                Some(val) => {
+                    log!("iterate_foreign_scan => Column: {}, Value: {}", col_name, val);
+
+                    let datum = parse_cell(val).into_datum().unwrap();
+                    state.values.push(datum);
+                    state.nulls.push(false);
+                }
+                None => {
+                    state.nulls.push(true);
+                }
+            }
+        }
+
+        (*slot).tts_values = state.values.as_mut_ptr();
+        (*slot).tts_isnull = state.nulls.as_mut_ptr();
+        pg_sys::ExecStoreVirtualTuple(slot);
+        
         state.row += 1;
         slot
+    }
+}
+
+fn parse_cell(val: &str) -> Cell {
+    match val.parse::<i32>() {
+        Ok(i) => Cell::I32(i),
+        Err(_) => Cell::String(val.to_string()),
     }
 }
 
@@ -318,25 +338,21 @@ extern "C-unwind" fn exec_foreign_insert(
         //let tupdesc = (*slot).tts_tupleDescriptor;
         //let natts = (*tupdesc).natts as usize;
         let mut map = TableMap::new();
-
-        PgMemoryContexts::For((*slot).tts_mcxt).switch_to(|_|{
-            let row: Row = tuple_table_slot_to_row(slot);
-
-            for i in 0..row.cells.len() {
-                let cell = &row.cells[i];
-                let col_name = &row.cols[i];
-                let val = match cell {
-                    Some(c) => c.to_string(),
-                    None => "NULL".to_string(),
-                };
-                log!(
-                    "Inserted column: {}, value: {}",
-                    col_name.to_string(),
-                    val
-                );
-                map.insert(col_name.to_string(), val);
-            }
-        });
+        let row: Row = tuple_table_slot_to_row(slot);
+        for i in 0..row.cells.len() {
+            let cell = &row.cells[i];
+            let col_name = &row.cols[i];
+            let val = match cell {
+                Some(c) => c.to_string(),
+                None => "NULL".to_string(),
+            };
+            log!(
+                "Inserted column: {}, value: {}",
+                col_name.to_string(),
+                val
+            );
+            map.insert(col_name.to_string(), val);
+        }
 
         MEMORY_TABLE.write().unwrap().push(map);
         (*slot).tts_tableOid = pg_sys::InvalidOid;
@@ -424,8 +440,19 @@ struct RedisFdwState {
     row: i32,
     values: Vec<Datum>,
     nulls: Vec<bool>,
+    tmp_ctx: MemoryContext,
 }
 
+impl RedisFdwState {
+    fn new(tmp_ctx: MemoryContext) -> Self {
+        RedisFdwState {
+            row: 0,
+            values: Vec::new(),
+            nulls: Vec::new(),
+            tmp_ctx
+        }
+    }
+}
 
 
 unsafe fn exec_clear_tuple(slot: *mut pg_sys::TupleTableSlot) {
@@ -797,4 +824,46 @@ fn write_array<T: std::fmt::Display>(
         .collect::<Vec<String>>()
         .join(",");
     write!(f, "[{}]", res)
+}
+
+const ROOT_MEMCTX_NAME: &str = "WrappersRootMemCtx";
+
+unsafe fn create_wrappers_memctx(name: &str) -> MemoryContext {
+    let mut root = ensure_root_wrappers_memctx();
+    let name = root.switch_to(|_| name.as_pg_cstr());
+    pg_sys::AllocSetContextCreateExtended(
+        root.value(),
+        name,
+        pg_sys::ALLOCSET_DEFAULT_MINSIZE as usize,
+        pg_sys::ALLOCSET_DEFAULT_INITSIZE as usize,
+        pg_sys::ALLOCSET_DEFAULT_MAXSIZE as usize,
+    )
+}
+
+unsafe fn ensure_root_wrappers_memctx() -> PgMemoryContexts {
+    find_memctx_under(ROOT_MEMCTX_NAME, PgMemoryContexts::CacheMemoryContext).unwrap_or_else(|| {
+        let name = PgMemoryContexts::CacheMemoryContext.pstrdup(ROOT_MEMCTX_NAME);
+        let ctx = pg_sys::AllocSetContextCreateExtended(
+            PgMemoryContexts::CacheMemoryContext.value(),
+            name,
+            pg_sys::ALLOCSET_DEFAULT_MINSIZE as usize,
+            pg_sys::ALLOCSET_DEFAULT_INITSIZE as usize,
+            pg_sys::ALLOCSET_DEFAULT_MAXSIZE as usize,
+        );
+        PgMemoryContexts::For(ctx)
+    })
+}
+
+// search memory context by name under specified MemoryContext
+unsafe fn find_memctx_under(name: &str, under: PgMemoryContexts) -> Option<PgMemoryContexts> {
+    let mut ctx = (*under.value()).firstchild;
+    while !ctx.is_null() {
+        if let Ok(ctx_name) = std::ffi::CStr::from_ptr((*ctx).name).to_str() {
+            if ctx_name == name {
+                return Some(PgMemoryContexts::For(ctx));
+            }
+        }
+        ctx = (*ctx).nextchild;
+    }
+    None
 }
