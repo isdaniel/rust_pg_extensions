@@ -1,20 +1,7 @@
-use pgrx::pg_sys::Datum;
-use pgrx::pg_sys::ModifyTable;
-use pgrx::pg_sys::Oid;
-use pgrx::pg_sys::PlannerInfo;
-use pgrx::pg_sys::{Index, RangeTblEntry, Relation};
-use pgrx::prelude::*;
-use pgrx::PgMemoryContexts;
-use pgrx::PgTupleDesc;
-use std::collections::HashMap;
-use std::ffi::CStr;
-use std::ffi::CString;
-use std::iter::Zip;
-use std::slice::Iter;
-use std::num::NonZeroUsize;
-use pgrx::AllocatedByRust;
-use std::ptr;
-use std::sync::RwLock;
+use pgrx::pg_sys::{Index, PlannerInfo, Oid, ModifyTable, Datum};
+use pgrx::{fcinfo, prelude::*, AllocatedByRust, PgMemoryContexts, PgTupleDesc};
+use std::fmt::Debug;
+use std::{collections::HashMap, ffi::{CStr, CString}, fmt, iter::Zip, num::NonZeroUsize, ptr, slice::Iter, sync::RwLock};
 use once_cell::sync::Lazy;
 
 type TableMap = HashMap<String, String>;
@@ -207,10 +194,12 @@ extern "C-unwind" fn begin_foreign_scan(
         let relid = (*(*node).ss.ss_currentRelation).rd_id;
         let options = get_foreign_table_options(relid);
         log!("Foreign table options: {:?}", options);
-        //let host_port = options.get("host_port").map(|s| s.as_str()).unwrap_or("127.0.0.1:6379");
-
         let state = PgMemoryContexts::CurrentMemoryContext
-            .leak_and_drop_on_delete(RedisFdwState { row: 0 });
+            .leak_and_drop_on_delete(RedisFdwState { 
+                row: 0 ,
+                values: Vec::new(),
+                nulls: Vec::new(),
+            });
 
         (*node).fdw_state = state as *mut std::ffi::c_void;
     }
@@ -229,44 +218,35 @@ extern "C-unwind" fn iterate_foreign_scan(
         let tupdesc = (*slot).tts_tupleDescriptor;
         let natts = (*tupdesc).natts as usize;
         let data = MEMORY_TABLE.read().unwrap();
-
-        if state.row >= data.len() as i32 {
-            exec_clear_tuple(slot);
+        //log!("iterate_foreign_scan data: {:?}", data);
+        exec_clear_tuple(slot);
+        if data.len() == 0 || state.row >= data.len() as i32 {
             return slot;
         }
 
-        exec_clear_tuple(slot);
+        let tuple_row = &data[state.row as usize];
+        log!("iterate_foreign_scan tuple_row: {:?}", tuple_row);
+        //tuple_table_slot_to_row(slot);
+        PgMemoryContexts::For((*slot).tts_mcxt).switch_to(|_|{
+            // let values_ptr =  ctx.palloc(std::mem::size_of::<pg_sys::Datum>() * natts) as *mut pg_sys::Datum;
+            // let nulls_ptr =  ctx.palloc(std::mem::size_of::<bool>() * natts) as *mut bool;
+          
+            for (col, val) in tuple_row.iter() {
+                log!("iterate_foreign_scan => Column: {}, Value: {}", col, val);
+                 let datum_data = match val.parse::<i32>() {
+                    Ok(i) => Cell::I32(i),
+                    Err(_) => Cell::String(val.clone()),
+                };
+                state.values.push(datum_data.into_datum().unwrap());
+                state.nulls.push(false);
+                // *values_ptr.add(i) = datum_data.into_datum().unwrap();
+                // *nulls_ptr.add(i) = false;
+            }
 
-        let row = &data[state.row as usize];
-
-        let values_ptr = PgMemoryContexts::For((*slot).tts_mcxt)
-            .palloc(std::mem::size_of::<pg_sys::Datum>() * natts)
-            as *mut pg_sys::Datum;
-
-        let nulls_ptr = PgMemoryContexts::For((*slot).tts_mcxt)
-            .palloc(std::mem::size_of::<bool>() * natts)
-            as *mut bool;
-
-        for i in 0..natts {
-            let attr = tuple_desc_attr(tupdesc, i);
-            let name = CStr::from_ptr((*attr).attname.data.as_ptr())
-                .to_str()
-                .unwrap_or("");
-
-            if let Some(val) = row.get(name) {
-                *values_ptr.add(i) = Datum::from(pg_sys::cstring_to_text(CString::new(val.clone()).unwrap().as_ptr()));
-                *nulls_ptr.add(i) = false;
-            } 
-            // else {
-            //     *values_ptr.add(i) = 0.into();
-            //     *nulls_ptr.add(i) = true;
-            // }
-        }
-
-        (*slot).tts_values = values_ptr;
-        (*slot).tts_isnull = nulls_ptr;
-        pg_sys::ExecStoreVirtualTuple(slot);
-
+            (*slot).tts_values = state.values.as_mut_ptr();
+            (*slot).tts_isnull = state.nulls.as_mut_ptr();
+            pg_sys::ExecStoreVirtualTuple(slot);
+        });
         state.row += 1;
         slot
     }
@@ -335,49 +315,29 @@ extern "C-unwind" fn exec_foreign_insert(
 ) -> *mut pg_sys::TupleTableSlot {
     log!("---> exec_foreign_insert");
      unsafe {
-        let tupdesc = (*slot).tts_tupleDescriptor;
-        let natts = (*tupdesc).natts as usize;
+        //let tupdesc = (*slot).tts_tupleDescriptor;
+        //let natts = (*tupdesc).natts as usize;
         let mut map = TableMap::new();
 
-        for i in 0..natts {
-            let attr = tuple_desc_attr(tupdesc, i);
-            let name = CStr::from_ptr((*attr).attname.data.as_ptr())
-                .to_str()
-                .unwrap_or_default()
-                .to_string();
+        PgMemoryContexts::For((*slot).tts_mcxt).switch_to(|_|{
+            let row: Row = tuple_table_slot_to_row(slot);
 
-            PgMemoryContexts::For((*slot).tts_mcxt).switch_to(|_|{
-                 let row: Row = tuple_table_slot_to_row(slot);
+            for i in 0..row.cells.len() {
+                let cell = &row.cells[i];
+                let col_name = &row.cols[i];
+                let val = match cell {
+                    Some(c) => c.to_string(),
+                    None => "NULL".to_string(),
+                };
+                log!(
+                    "Inserted column: {}, value: {}",
+                    col_name.to_string(),
+                    val
+                );
+                map.insert(col_name.to_string(), val);
+            }
+        });
 
-                 for i in 0..row.cells.len() {
-                    let cell = &row.cells[i];
-                    let val = cell.as_ref().map(|c| format!("{:?}", c)).unwrap_or_else(|| "NULL".to_string());
-                    log!(
-                        "Inserted column: {}, value: {}",
-                        row.cols[i].clone(),
-                        val
-                    );
-                    map.insert(row.cols[i].clone(), val);
-                 }
-            });
-
-            // let is_null = (*slot).tts_isnull.add(i).read();
-            // let val = (*slot).tts_values.add(i).read();
-
-            // let str_val = if is_null {
-            //     "NULL".to_string()
-            // } else {
-            //     FromDatum::from_polymorphic_datum(val, false, (*attr).atttypid)
-            //         .unwrap_or_else(|| "<conversion error>".to_string())
-            // };
-            // log!(
-            //     "Inserted column: {}, value: {}, val {:?}",
-            //     name,
-            //     str_val,
-            //     val
-            // );
-            // row.insert(name, str_val);
-        }
         MEMORY_TABLE.write().unwrap().push(map);
         (*slot).tts_tableOid = pg_sys::InvalidOid;
         slot
@@ -445,46 +405,6 @@ unsafe fn tuple_table_slot_to_row(slot: *mut pg_sys::TupleTableSlot) -> Row {
     row
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct Row {
-    /// column names
-    pub cols: Vec<String>,
-
-    /// column cell list, should match with cols
-    pub cells: Vec<Option<Cell>>,
-}
-
-impl Row {
-    /// Create an empty row
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Push a cell with column name to this row
-    pub fn push(&mut self, col: &str, cell: Option<Cell>) {
-        self.cols.push(col.to_owned());
-        self.cells.push(cell);
-    }
-    
-    pub fn iter(&self) -> Zip<Iter<'_, String>, Iter<'_, Option<Cell>>> {
-        self.cols.iter().zip(self.cells.iter())
-    }
-
-    /// Remove a cell at the specified index
-    pub fn retain<F>(&mut self, f: F)
-    where
-        F: FnMut((&String, &Option<Cell>)) -> bool,
-    {
-        let keep: Vec<bool> = self.iter().map(f).collect();
-        let mut iter = keep.iter();
-        self.cols.retain(|_| *iter.next().unwrap_or(&true));
-        iter = keep.iter();
-        self.cells.retain(|_| *iter.next().unwrap_or(&true));
-    }
-
-}
-
-
 #[pg_guard]
 extern "C-unwind" fn end_foreign_modify(
     _estate: *mut pg_sys::EState,
@@ -502,6 +422,8 @@ unsafe fn tuple_desc_attr(tupdesc: pg_sys::TupleDesc, attnum: usize) -> *const p
 #[repr(C)]
 struct RedisFdwState {
     row: i32,
+    values: Vec<Datum>,
+    nulls: Vec<bool>,
 }
 
 
@@ -556,6 +478,45 @@ mod tests {
     }
 }
 
+
+#[derive(Debug, Clone, Default)]
+pub struct Row {
+    /// column names
+    pub cols: Vec<String>,
+
+    /// column cell list, should match with cols
+    pub cells: Vec<Option<Cell>>,
+}
+
+impl Row {
+    /// Create an empty row
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Push a cell with column name to this row
+    pub fn push(&mut self, col: &str, cell: Option<Cell>) {
+        self.cols.push(col.to_owned());
+        self.cells.push(cell);
+    }
+    
+    pub fn iter(&self) -> Zip<Iter<'_, String>, Iter<'_, Option<Cell>>> {
+        self.cols.iter().zip(self.cells.iter())
+    }
+
+    /// Remove a cell at the specified index
+    pub fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut((&String, &Option<Cell>)) -> bool,
+    {
+        let keep: Vec<bool> = self.iter().map(f).collect();
+        let mut iter = keep.iter();
+        self.cols.retain(|_| *iter.next().unwrap_or(&true));
+        iter = keep.iter();
+        self.cells.retain(|_| *iter.next().unwrap_or(&true));
+    }
+
+}
 
 #[derive(Debug)]
 pub enum Cell {
@@ -744,4 +705,96 @@ impl Clone for Cell {
             Cell::StringArray(v) => Cell::StringArray(v.clone()),
         }
     }
+}
+
+
+impl fmt::Display for Cell {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Cell::Bool(v) => write!(f, "{}", v),
+            Cell::I8(v) => write!(f, "{}", v),
+            Cell::I16(v) => write!(f, "{}", v),
+            Cell::F32(v) => write!(f, "{}", v),
+            Cell::I32(v) => write!(f, "{}", v),
+            Cell::F64(v) => write!(f, "{}", v),
+            Cell::I64(v) => write!(f, "{}", v),
+            Cell::Numeric(v) => write!(f, "{}", v),
+            Cell::String(v) => write!(f, "'{}'", v),
+            Cell::Date(v) => unsafe {
+                let dt =
+                    fcinfo::direct_function_call_as_datum(pg_sys::date_out, &[(*v).into_datum()])
+                        .expect("cell should be a valid date");
+                let dt_cstr = CStr::from_ptr(dt.cast_mut_ptr());
+                write!(
+                    f,
+                    "'{}'",
+                    dt_cstr.to_str().expect("date should be a valid string")
+                )
+            },
+            Cell::Time(v) => unsafe {
+                let ts =
+                    fcinfo::direct_function_call_as_datum(pg_sys::time_out, &[(*v).into_datum()])
+                        .expect("cell should be a valid time");
+                let ts_cstr = CStr::from_ptr(ts.cast_mut_ptr());
+                write!(
+                    f,
+                    "'{}'",
+                    ts_cstr.to_str().expect("time hould be a valid string")
+                )
+            },
+            Cell::Timestamp(v) => unsafe {
+                let ts = fcinfo::direct_function_call_as_datum(
+                    pg_sys::timestamp_out,
+                    &[(*v).into_datum()],
+                )
+                .expect("cell should be a valid timestamp");
+                let ts_cstr = CStr::from_ptr(ts.cast_mut_ptr());
+                write!(
+                    f,
+                    "'{}'",
+                    ts_cstr
+                        .to_str()
+                        .expect("timestamp should be a valid string")
+                )
+            },
+            Cell::Timestamptz(v) => unsafe {
+                let ts = fcinfo::direct_function_call_as_datum(
+                    pg_sys::timestamptz_out,
+                    &[(*v).into_datum()],
+                )
+                .expect("cell should be a valid timestamptz");
+                let ts_cstr = CStr::from_ptr(ts.cast_mut_ptr());
+                write!(
+                    f,
+                    "'{}'",
+                    ts_cstr
+                        .to_str()
+                        .expect("timestamptz should be a valid string")
+                )
+            },
+            Cell::Interval(v) => write!(f, "{}", v),
+            Cell::BoolArray(v) => write_array(v, f),
+            Cell::I16Array(v) => write_array(v, f),
+            Cell::I32Array(v) => write_array(v, f),
+            Cell::I64Array(v) => write_array(v, f),
+            Cell::F32Array(v) => write_array(v, f),
+            Cell::F64Array(v) => write_array(v, f),
+            Cell::StringArray(v) => write_array(v, f),
+        }
+    }
+}
+
+fn write_array<T: std::fmt::Display>(
+    array: &[Option<T>],
+    f: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
+    let res = array
+        .iter()
+        .map(|e| match e {
+            Some(val) => format!("{}", val),
+            None => "null".to_owned(),
+        })
+        .collect::<Vec<String>>()
+        .join(",");
+    write!(f, "[{}]", res)
 }
