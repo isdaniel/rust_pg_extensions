@@ -15,8 +15,10 @@ use crate::default_fdw::{
 type TableMap = HashMap<String, String>;
 static MEMORY_TABLE: Lazy<std::sync::RwLock<Vec<TableMap>>> = Lazy::new(|| std::sync::RwLock::new(Vec::new()));
 
+pub type FdwRoutine<A = AllocatedByRust> = PgBox<pgrx::pg_sys::FdwRoutine, A>;
+
 #[pg_extern(create_or_replace)]
-pub extern "C" fn default_fdw_handler() -> PgBox<pgrx::pg_sys::FdwRoutine> {
+pub extern "C" fn default_fdw_handler() -> FdwRoutine {
     log!("---> default_fdw_handler");
     unsafe {
         let mut fdw_routine = PgBox::<pgrx::pg_sys::FdwRoutine, AllocatedByRust>::alloc_node(pgrx::pg_sys::NodeTag::T_FdwRoutine);
@@ -41,7 +43,7 @@ pub extern "C" fn default_fdw_handler() -> PgBox<pgrx::pg_sys::FdwRoutine> {
         fdw_routine.ExecForeignUpdate = Some(exec_foreign_update);
         fdw_routine.EndForeignModify = Some(end_foreign_modify);
 
-        fdw_routine.into_pg_boxed()
+        fdw_routine
     }
 }
 
@@ -225,7 +227,7 @@ extern "C-unwind" fn re_scan_foreign_scan(
 
 #[cfg(feature = "pg13")]
 #[pg_guard]
-unsafe extern "C" fn add_foreign_update_targets(
+unsafe extern "C-unwind" fn add_foreign_update_targets(
     parsetree: *mut pgrx::pg_sys::Query,
     _target_rte: *mut pgrx::pg_sys::RangeTblEntry,
     target_relation: pgrx::pg_sys::Relation,
