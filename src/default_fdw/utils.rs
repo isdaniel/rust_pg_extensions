@@ -1,5 +1,5 @@
 use std::{collections::HashMap, ffi::CStr, num::NonZeroUsize};
-use pgrx::{PgTupleDesc, PgBox};
+use pgrx::{list, pg_sys::{self, defGetString, list_concat}, PgBox, PgTupleDesc};
 
 #[cfg(any(feature = "pg13", feature = "pg14"))]
 use pgrx::pg_sys::Value;
@@ -25,13 +25,16 @@ pub unsafe fn pg_string_to_rust(val_value: *mut Value) -> String {
 
 pub unsafe fn get_foreign_table_options(relid: pgrx::pg_sys::Oid) -> HashMap<String, String> {
     let mut options = HashMap::new();
+    let table = pg_sys::GetForeignTable(relid);
+    let server = pg_sys::GetForeignServer((*table).serverid);
+    let wrapper = pg_sys::GetForeignDataWrapper((*server).fdwid);
 
-    let ft = pgrx::pg_sys::GetForeignTable(relid);
-    if ft.is_null() {
-        return options;
-    }
+    let mut opts_list = std::ptr::null_mut();
 
-    let opts_list = (*ft).options;
+    opts_list = list_concat(opts_list, (*wrapper).options);
+    opts_list = list_concat(opts_list, (*server).options);
+    opts_list = list_concat(opts_list, (*table).options);
+
     if opts_list.is_null() {
         return options;
     }
@@ -63,6 +66,16 @@ pub unsafe fn get_foreign_table_options(relid: pgrx::pg_sys::Oid) -> HashMap<Str
     options
 }
 
+/// Get the attribute descriptor for a given attribute number in a tuple descriptor
+/// This function is unsafe because it dereferences raw pointers and assumes that the tuple descriptor is valid and properly initialized.
+/// # Arguments
+/// * `tupdesc`: A pointer to a `TupleDesc` structure.
+/// * `attnum`: The attribute number (1-based index) for which to retrieve the attribute descriptor.
+/// # Returns
+/// A pointer to the `FormData_pg_attribute` structure for the specified attribute number.
+/// # Note
+/// The attribute number is 1-based, meaning that `attnum = 1` corresponds to the first attribute in the tuple descriptor.
+
 pub unsafe fn tuple_desc_attr(tupdesc: pgrx::pg_sys::TupleDesc, attnum: usize) -> *const pgrx::pg_sys::FormData_pg_attribute {
      (*tupdesc).attrs.as_mut_ptr().add(attnum)
 }
@@ -73,6 +86,12 @@ pub unsafe fn exec_clear_tuple(slot: *mut pgrx::pg_sys::TupleTableSlot) {
     }
 }
 
+/// Convert a `TupleTableSlot` to a `Row`
+/// This function is unsafe because it dereferences raw pointers and assumes that the `TupleTableSlot` is valid and properly initialized.
+/// # Arguments
+/// * `slot`: A pointer to a `TupleTableSlot` structure.
+/// # Returns
+/// A `Row` containing the data from the `TupleTableSlot`. The row will contain cells for each attribute in the tuple descriptor, excluding dropped attributes.
 pub unsafe fn tuple_table_slot_to_row(slot: *mut pgrx::pg_sys::TupleTableSlot) -> crate::default_fdw::Row {
     use crate::default_fdw::{Row, Cell};
     
@@ -91,4 +110,22 @@ pub unsafe fn tuple_table_slot_to_row(slot: *mut pgrx::pg_sys::TupleTableSlot) -
     }
 
     row
+}
+
+/// Convert a C string pointer to a Rust String
+/// # Safety
+/// This function is unsafe because it dereferences a raw pointer. Ensure that the pointer is valid and points to a null-terminated C string.
+/// Convert a C string pointer to a Rust String
+/// # Safety
+/// This function is unsafe because it dereferences a raw pointer. Ensure that the pointer is valid and points to a null-terminated C string.
+/// # Arguments
+/// * `c_str`: A pointer to a null-terminated C string.
+/// 
+/// # Returns
+/// A Rust `String` containing the contents of the C string. If the pointer is null, an empty string is returned.
+pub fn string_from_cstr(c_str: *const i8) -> String {
+    if c_str.is_null() {
+        return String::new();
+    }
+    unsafe { CStr::from_ptr(c_str).to_string_lossy().into_owned() }
 }

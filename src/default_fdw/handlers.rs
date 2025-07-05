@@ -1,8 +1,7 @@
 use std::{collections::HashMap, ptr, ffi::CStr};
 use once_cell::sync::Lazy;
 use pgrx::{
-    pg_sys::{Index, ModifyTable, PlannerInfo},
-    prelude::*, AllocatedByRust, PgRelation, PgTupleDesc, PgBox
+    pg_sys::{add_path, Index, ModifyTable, PlannerInfo}, prelude::*, AllocatedByRust, PgBox, PgRelation, PgTupleDesc
 };
 
 use crate::default_fdw::{
@@ -69,7 +68,7 @@ extern "C-unwind" fn get_foreign_rel_size(
         let ctx = create_wrappers_memctx(&ctx_name);
         let state = RedisFdwState::new(ctx);
 
-        (*baserel).fdw_private = Box::leak(Box::new(state)) as *mut RedisFdwState as *mut std::os::raw::c_void;
+        (*baserel).fdw_private = Box::into_raw(Box::new(state)) as *mut RedisFdwState as *mut std::os::raw::c_void;
 
         log!("(*baserel).fdw_private {:?}",(*baserel).fdw_private);
         (*baserel).rows = 1000.0;
@@ -101,29 +100,26 @@ extern "C-unwind" fn get_foreign_paths(
 }
 
 #[pg_guard]
-extern "C-unwind" fn get_foreign_plan(
+unsafe extern "C-unwind" fn get_foreign_plan(
     _root: *mut pgrx::pg_sys::PlannerInfo,
     baserel: *mut pgrx::pg_sys::RelOptInfo,
     _foreigntableid: pgrx::pg_sys::Oid,
     _best_path: *mut pgrx::pg_sys::ForeignPath,
-    _tlist: *mut pgrx::pg_sys::List,
-    _scan_clauses: *mut pgrx::pg_sys::List,
-    _outer_plan: *mut pgrx::pg_sys::Plan,
+    tlist: *mut pgrx::pg_sys::List,
+    scan_clauses: *mut pgrx::pg_sys::List,
+    outer_plan: *mut pgrx::pg_sys::Plan,
 ) -> *mut pgrx::pg_sys::ForeignScan {
     log!("---> get_foreign_plan");
-    unsafe {
-        let fdw_private = (*baserel).fdw_private;
-        pgrx::pg_sys::make_foreignscan(
-            _tlist,
-            _scan_clauses,
-            (*baserel).relid,
-            ptr::null_mut(),
-            fdw_private as _,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            _outer_plan,
-        )
-    }
+    pgrx::pg_sys::make_foreignscan(
+        tlist,
+        scan_clauses,
+        (*baserel).relid,
+        ptr::null_mut(),
+        (*baserel).fdw_private as _,
+        ptr::null_mut(),
+        ptr::null_mut(),
+        outer_plan,
+    )
 }
 
 #[pg_guard]
@@ -138,8 +134,13 @@ extern "C-unwind" fn explain_foreign_scan(
 #[pg_guard]
 extern "C-unwind" fn begin_foreign_scan(
     node: *mut pgrx::pg_sys::ForeignScanState,
-    _eflags: ::std::os::raw::c_int,
+    eflags: ::std::os::raw::c_int,
 ) {
+
+    if eflags & pg_sys::EXEC_FLAG_EXPLAIN_ONLY as i32 != 0 {
+        return;
+    }
+
     log!("---> begin_foreign_scan");
     unsafe {
         let scan_state = (*node).ss;
@@ -211,9 +212,8 @@ extern "C-unwind" fn end_foreign_scan(
 ) {
     log!("---> end_foreign_scan");
     unsafe {
-        if !(*node).fdw_state.is_null() {
-            (*node).fdw_state = std::ptr::null_mut();
-        }
+        let state = (*node).fdw_state as *mut RedisFdwState;
+        let _ = Box::from_raw(state);
     }
 }
 
