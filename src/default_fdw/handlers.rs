@@ -5,10 +5,7 @@ use pgrx::{
 };
 
 use crate::default_fdw::{
-    RedisFdwState, FdwModifyState, Row,
-    create_wrappers_memctx, get_foreign_table_options,
-    tuple_desc_attr, exec_clear_tuple, tuple_table_slot_to_row,
-    parse_cell
+    create_wrappers_memctx, exec_clear_tuple, get_foreign_table_options, parse_cell, tuple_desc_attr, tuple_table_slot_to_row, utils::{get_datum, string_from_cstr}, FdwModifyState, RedisFdwState, Row
 };
 
 type TableMap = HashMap<String, String>;
@@ -69,7 +66,6 @@ extern "C-unwind" fn get_foreign_rel_size(
         let state = RedisFdwState::new(ctx);
 
         (*baserel).fdw_private = Box::into_raw(Box::new(state)) as *mut RedisFdwState as *mut std::os::raw::c_void;
-
         log!("(*baserel).fdw_private {:?}",(*baserel).fdw_private);
         (*baserel).rows = 1000.0;
     }
@@ -144,12 +140,29 @@ extern "C-unwind" fn begin_foreign_scan(
     log!("---> begin_foreign_scan");
     unsafe {
         let scan_state = (*node).ss;
-        let plan = scan_state.ps.plan as *mut pgrx::pg_sys::ForeignScan;
-        let relid = (*(*node).ss.ss_currentRelation).rd_id;
+        let plan = scan_state.ps.plan as *mut pg_sys::ForeignScan;
+        let relation = (*node).ss.ss_currentRelation;
+        let relid = (*relation).rd_id;
+        let mut state =  PgBox::<RedisFdwState>::from_pg((*plan).fdw_private as _); 
+
         let options = get_foreign_table_options(relid);
         log!("Foreign table options: {:?}", options);
+
+        state.header_name_to_colno = {
+            let mut map = HashMap::new();
+            let rd_att = (*relation).rd_att;
+            let natts = (*rd_att).natts;
+            for i in 0..natts {
+                let attr = tuple_desc_attr(rd_att, i as usize);
+                let col_name = string_from_cstr((*attr).attname.data.as_ptr());
+                map.insert(col_name, i as usize); 
+            }
+            map
+        };
+
+        log!("Header name to column number mapping: {:?}", state.header_name_to_colno);
+        
         (*node).fdw_state = (*plan).fdw_private as *mut std::os::raw::c_void;
-        log!(" (*node).fdw_state: {:?}",  (*node).fdw_state);
     }
 }
 
@@ -163,45 +176,49 @@ extern "C-unwind" fn iterate_foreign_scan(
         let mut state = PgBox::<RedisFdwState>::from_pg((*node).fdw_state as _);
         let slot = (*node).ss.ss_ScanTupleSlot;
         let tupdesc = (*slot).tts_tupleDescriptor;
-        let natts = (*tupdesc).natts as usize;
+        let header_name_to_colno = &state.header_name_to_colno;
         let data = MEMORY_TABLE.read().unwrap();
         
         exec_clear_tuple(slot);
-        if data.len() == 0 || state.row >= data.len() as i32 {
+        if data.len() == 0 || state.row_count >= data.len() {
             return slot;
         }
-
-        let tuple_row = &data[state.row as usize];
+    
+        let tuple_row = &data[state.row_count];
         log!("iterate_foreign_scan tuple_row: {:?}", tuple_row);
-
-        state.values.clear();
-        state.nulls.clear();
-        for i in 0..natts {
-            let attr = tuple_desc_attr(tupdesc, i);
-            let col_name = CStr::from_ptr((*attr).attname.data.as_ptr())
-                .to_string_lossy()
-                .trim_end_matches('\0')
-                .to_string();
-
-            match tuple_row.get(&col_name) {
-                Some(val) => {
-                    log!("iterate_foreign_scan => Column: {}, Value: {}", col_name, val);
-
-                    let datum = parse_cell(val).into_datum().unwrap();
-                    state.values.push(datum);
-                    state.nulls.push(false);
-                }
-                None => {
-                    state.nulls.push(true);
-                }
-            }
+        
+        for (col_name, value_str) in tuple_row.iter() {
+            let colno = header_name_to_colno[col_name];
+            let pgtype = (*tuple_desc_attr(tupdesc, colno )).atttypid;
+            let datum_value = get_datum(value_str, pgtype);
+            (*slot).tts_values.add(colno).write(datum_value);
+            (*slot).tts_isnull.add(colno).write(false);
         }
 
-        (*slot).tts_values = state.values.as_mut_ptr();
-        (*slot).tts_isnull = state.nulls.as_mut_ptr();
+        // state.values.clear();
+        // state.nulls.clear();
+        // for i in 0..natts {
+        //     let attr = tuple_desc_attr(tupdesc, i);
+        //     let col_name = string_from_cstr((*attr).attname.data.as_ptr());
+        //     match tuple_row.get(&col_name) {
+        //         Some(val) => {
+        //             log!("iterate_foreign_scan => Column: {}, Value: {}", col_name, val);
+
+        //             let datum = parse_cell(val).into_datum().unwrap();
+        //             state.values.push(datum);
+        //             state.nulls.push(false);
+        //         }
+        //         None => {
+        //             state.nulls.push(true);
+        //         }
+        //     }
+        // }
+        
+        // (*slot).tts_values = state.values.as_mut_ptr();
+        // (*slot).tts_isnull = state.nulls.as_mut_ptr();
         pgrx::pg_sys::ExecStoreVirtualTuple(slot);
         
-        state.row += 1;
+        state.row_count += 1;
         slot
     }
 }

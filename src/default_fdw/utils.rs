@@ -93,7 +93,7 @@ unsafe fn get_options_from_fdw(relid: Oid) -> *mut pg_sys::List {
 /// # Note
 /// The attribute number is 1-based, meaning that `attnum = 1` corresponds to the first attribute in the tuple descriptor.
 
-pub unsafe fn tuple_desc_attr(tupdesc: pgrx::pg_sys::TupleDesc, attnum: usize) -> *const pgrx::pg_sys::FormData_pg_attribute {
+pub unsafe fn tuple_desc_attr(tupdesc: pg_sys::TupleDesc, attnum: usize) -> *const pg_sys::FormData_pg_attribute {
      (*tupdesc).attrs.as_mut_ptr().add(attnum)
 }
 
@@ -144,7 +144,7 @@ pub fn string_from_cstr(c_str: *const i8) -> String {
     if c_str.is_null() {
         return String::new();
     }
-    unsafe { CStr::from_ptr(c_str).to_string_lossy().into_owned() }
+    unsafe { CStr::from_ptr(c_str).to_string_lossy().trim_end_matches('\0').to_string() }
 }
 
 
