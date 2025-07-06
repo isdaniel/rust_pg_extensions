@@ -1,15 +1,23 @@
 use std::{collections::HashMap, ffi::{c_int, CStr}, ptr, slice};
 use once_cell::sync::Lazy;
 use pgrx::{
-    pg_sys::{add_path, Datum, Index, ModifyTable, PlannerInfo}, prelude::*, AllocatedByRust, PgBox, PgMemoryContexts, PgRelation, PgTupleDesc
+    pg_sys::{ Datum, Index, ModifyTable, PlannerInfo}, prelude::*, AllocatedByRust, PgBox, PgRelation, PgTupleDesc
 };
 use crate::fdw::utils_share::{
-    memory::create_wrappers_memctx, utils::{exec_clear_tuple, get_datum, string_from_cstr}
+    cell::Cell,
+    memory::create_wrappers_memctx,
+    row::Row,
+    utils::{
+        exec_clear_tuple,
+        get_datum,
+        get_foreign_table_options,
+        string_from_cstr,
+        tuple_desc_attr,
+        tuple_table_slot_to_row,
+    }
 };
-use crate::fdw::utils_share::cell::Cell;
-use crate::fdw::utils_share::state::{FdwModifyState, RedisFdwState};
-use crate::fdw::utils_share::row::Row;
-use crate::fdw::utils_share::utils::{get_foreign_table_options, tuple_desc_attr, tuple_table_slot_to_row};
+
+use crate::fdw::default_fdw::state::{DefaultFdwState, FdwModifyState};
 
 type TableMap = HashMap<String, String>;
 static MEMORY_TABLE: Lazy<std::sync::RwLock<Vec<TableMap>>> = Lazy::new(|| std::sync::RwLock::new(Vec::new()));
@@ -66,9 +74,9 @@ extern "C-unwind" fn get_foreign_rel_size(
         let ctx_name = format!("Wrappers_scan_{}", foreigntableid.to_u32());
         log!("Creating memory context: {}", ctx_name);
         let ctx = create_wrappers_memctx(&ctx_name);
-        let state = RedisFdwState::new(ctx);
+        let state = DefaultFdwState::new(ctx);
 
-        (*baserel).fdw_private = Box::into_raw(Box::new(state)) as *mut RedisFdwState as *mut std::os::raw::c_void;
+        (*baserel).fdw_private = Box::into_raw(Box::new(state)) as *mut DefaultFdwState as *mut std::os::raw::c_void;
         log!("(*baserel).fdw_private {:?}",(*baserel).fdw_private);
         (*baserel).rows = 1000.0;
     }
@@ -146,7 +154,7 @@ extern "C-unwind" fn begin_foreign_scan(
         let plan = scan_state.ps.plan as *mut pg_sys::ForeignScan;
         let relation = (*node).ss.ss_currentRelation;
         let relid = (*relation).rd_id;
-        let mut state =  PgBox::<RedisFdwState>::from_pg((*plan).fdw_private as _); 
+        let mut state =  PgBox::<DefaultFdwState>::from_pg((*plan).fdw_private as _); 
 
         let options = get_foreign_table_options(relid);
         log!("Foreign table options: {:?}", options);
@@ -176,7 +184,7 @@ extern "C-unwind" fn iterate_foreign_scan(
     log!("---> iterate_foreign_scan");
 
     unsafe {
-        let mut state = PgBox::<RedisFdwState>::from_pg((*node).fdw_state as _);
+        let mut state = PgBox::<DefaultFdwState>::from_pg((*node).fdw_state as _);
         let slot = (*node).ss.ss_ScanTupleSlot;
         let tupdesc = (*slot).tts_tupleDescriptor;
         let header_name_to_colno = &state.header_name_to_colno;
@@ -232,7 +240,7 @@ extern "C-unwind" fn end_foreign_scan(
 ) {
     log!("---> end_foreign_scan");
     unsafe {
-        let state = (*node).fdw_state as *mut RedisFdwState;
+        let state = (*node).fdw_state as *mut DefaultFdwState;
         let _ = Box::from_raw(state);
     }
 }

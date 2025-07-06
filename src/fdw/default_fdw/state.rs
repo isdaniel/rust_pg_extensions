@@ -1,9 +1,8 @@
 use std::collections::HashMap;
-
 use pgrx::pg_sys::{Oid, Datum, MemoryContext};
 
 #[repr(C)]
-pub struct RedisFdwState {
+pub struct DefaultFdwState {
     pub row_count: usize,
     pub values: Vec<Datum>,
     pub nulls: Vec<bool>,
@@ -26,9 +25,9 @@ pub struct FdwModifyState {
     pub update_cols: Vec<String>,
 }
 
-impl RedisFdwState {
+impl DefaultFdwState {
     pub fn new(tmp_ctx: MemoryContext) -> Self {
-        RedisFdwState {
+        DefaultFdwState {
             row_count: 0,
             values: Vec::new(),
             nulls: Vec::new(),
