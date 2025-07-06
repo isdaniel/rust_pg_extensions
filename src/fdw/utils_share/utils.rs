@@ -1,5 +1,7 @@
 use std::{collections::HashMap, ffi::{c_void, CStr, CString}, num::NonZeroUsize};
 use pgrx::{list, memcx::{self, MemCx}, pg_sys::{self, defGetString, fmgr_info, getTypeInputInfo, list_concat, Datum, FmgrInfo, InputFunctionCall, Oid}, PgBox, PgTupleDesc};
+use crate::fdw::utils_share::row::Row;
+use crate::fdw::utils_share::cell::Cell;
 
 #[cfg(any(feature = "pg13", feature = "pg14"))]
 use pgrx::pg_sys::Value;
@@ -50,7 +52,7 @@ unsafe fn get_options_from_fdw(relid: Oid) -> *mut pg_sys::List {
     let table = pg_sys::GetForeignTable(relid);
     let server = pg_sys::GetForeignServer((*table).serverid);
     let wrapper = pg_sys::GetForeignDataWrapper((*server).fdwid);
-    
+    //pg_sys::GetUserMapping(pg_sys::GetUserId(), (*server).fdwid);
     let mut opts_list = std::ptr::null_mut();
     
     opts_list = list_concat(opts_list, (*wrapper).options);
@@ -109,9 +111,8 @@ pub unsafe fn exec_clear_tuple(slot: *mut pgrx::pg_sys::TupleTableSlot) {
 /// * `slot`: A pointer to a `TupleTableSlot` structure.
 /// # Returns
 /// A `Row` containing the data from the `TupleTableSlot`. The row will contain cells for each attribute in the tuple descriptor, excluding dropped attributes.
-pub unsafe fn tuple_table_slot_to_row(slot: *mut pgrx::pg_sys::TupleTableSlot) -> crate::default_fdw::Row {
-    use crate::default_fdw::{Row, Cell};
-    
+pub unsafe fn tuple_table_slot_to_row(slot: *mut pgrx::pg_sys::TupleTableSlot) -> crate::fdw::utils_share::row::Row {
+
     let tup_desc = PgTupleDesc::from_pg_copy((*slot).tts_tupleDescriptor);
 
     let mut should_free = false;

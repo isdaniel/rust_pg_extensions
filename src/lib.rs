@@ -1,7 +1,7 @@
 mod my_wal_decoder;
 mod utility_lib;
 mod networking_lib;
-mod default_fdw;
+mod fdw;
 
 ::pgrx::pg_module_magic!();
 

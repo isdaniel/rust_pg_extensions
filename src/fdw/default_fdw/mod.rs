@@ -1,9 +1,4 @@
-pub mod cell;
-pub mod row;
-pub mod state;
-pub mod memory;
-pub mod handlers;
-pub mod utils;
+mod handlers;
 
 #[cfg(any(test, feature = "pg_test"))]
 #[pgrx::pg_schema] 
@@ -11,7 +6,7 @@ mod tests {
     use std::ffi::CString;
     use pgrx_macros::pg_test;
     use pgrx::pg_sys;
-    use crate::default_fdw::utils::*;
+    use crate::fdw::utils_share::utils::*;
 
     #[cfg(any(feature = "pg13", feature = "pg14"))]
     #[pg_test]
@@ -45,9 +40,3 @@ mod tests {
         assert_eq!(result, "\"hello\"");
     }
 }
-
-pub use cell::{Cell, parse_cell};
-pub use row::Row;
-pub use state::{RedisFdwState, FdwModifyState};
-pub use memory::create_wrappers_memctx;
-pub use utils::{get_foreign_table_options, tuple_desc_attr, exec_clear_tuple, tuple_table_slot_to_row};

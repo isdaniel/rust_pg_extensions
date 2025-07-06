@@ -1,12 +1,15 @@
-use std::{collections::HashMap, ptr, ffi::CStr};
+use std::{collections::HashMap, ffi::{c_int, CStr}, ptr, slice};
 use once_cell::sync::Lazy;
 use pgrx::{
-    pg_sys::{add_path, Index, ModifyTable, PlannerInfo}, prelude::*, AllocatedByRust, PgBox, PgRelation, PgTupleDesc
+    pg_sys::{add_path, Datum, Index, ModifyTable, PlannerInfo}, prelude::*, AllocatedByRust, PgBox, PgMemoryContexts, PgRelation, PgTupleDesc
 };
-
-use crate::default_fdw::{
-    create_wrappers_memctx, exec_clear_tuple, get_foreign_table_options, parse_cell, tuple_desc_attr, tuple_table_slot_to_row, utils::{get_datum, string_from_cstr}, FdwModifyState, RedisFdwState, Row
+use crate::fdw::utils_share::{
+    memory::create_wrappers_memctx, utils::{exec_clear_tuple, get_datum, string_from_cstr}
 };
+use crate::fdw::utils_share::cell::Cell;
+use crate::fdw::utils_share::state::{FdwModifyState, RedisFdwState};
+use crate::fdw::utils_share::row::Row;
+use crate::fdw::utils_share::utils::{get_foreign_table_options, tuple_desc_attr, tuple_table_slot_to_row};
 
 type TableMap = HashMap<String, String>;
 static MEMORY_TABLE: Lazy<std::sync::RwLock<Vec<TableMap>>> = Lazy::new(|| std::sync::RwLock::new(Vec::new()));
@@ -293,9 +296,9 @@ unsafe extern "C-unwind" fn plan_foreign_modify(
 
                 state.rowid_name = rowid_name.to_string();
                 state.rowid_typid = attr.atttypid;
-                let raw_state_ptr = Box::into_raw(Box::new(state)) as *mut ::std::ffi::c_void;
+                let raw_state_ptr = Box::into_raw(Box::new(state))  as *mut std::os::raw::c_void;
 
-                return pgrx::pg_sys::lcons(raw_state_ptr as *mut _, std::ptr::null_mut());
+                return pg_sys::lcons(raw_state_ptr as *mut _, std::ptr::null_mut());
             }
         }
 
@@ -305,16 +308,16 @@ unsafe extern "C-unwind" fn plan_foreign_modify(
 
 #[pg_guard]
 extern "C-unwind" fn begin_foreign_modify(
-    _mtstate: *mut pgrx::pg_sys::ModifyTableState,
+    mtstate: *mut pgrx::pg_sys::ModifyTableState,
     rinfo: *mut pgrx::pg_sys::ResultRelInfo,
     fdw_private: *mut pgrx::pg_sys::List,
-    _subplan_index: ::std::os::raw::c_int,
-    _eflags: ::std::os::raw::c_int,
+    subplan_index: ::std::os::raw::c_int,
+    eflags: ::std::os::raw::c_int,
 ) {
     log!("---> begin_foreign_modify");
-     unsafe {
-        let state =  PgBox::<FdwModifyState>::from_pg(fdw_private as _); 
-        (*rinfo).ri_FdwState = state.into_pg() as _;
+    unsafe {
+        let state = PgBox::<FdwModifyState>::from_pg(fdw_private as _);
+        (*rinfo).ri_FdwState = state.into_pg() as *mut std::os::raw::c_void;
     }
 }
 
@@ -367,13 +370,13 @@ extern "C-unwind" fn exec_foreign_delete(
     _estate: *mut pgrx::pg_sys::EState,
     rinfo: *mut pgrx::pg_sys::ResultRelInfo,
     slot: *mut pgrx::pg_sys::TupleTableSlot,
-    _plan_slot: *mut pgrx::pg_sys::TupleTableSlot,
+    plan_slot: *mut pgrx::pg_sys::TupleTableSlot,
 ) -> *mut pgrx::pg_sys::TupleTableSlot {
     log!("---> exec_foreign_delete");
     unsafe {
-        let _state = PgBox::<FdwModifyState>::from_pg((*rinfo).ri_FdwState as _);
-        // let cell = get_rowid_cell(&state, plan_slot);
-        // log!("Delete operation: rowid cell: {:?}", cell);
+        let state = PgBox::<FdwModifyState>::from_pg((*rinfo).ri_FdwState as _);
+        let cell = get_rowid_cell(&state, plan_slot);
+        log!("Delete operation: rowid cell: {:?}", cell);
     }
 
     let mut data = MEMORY_TABLE.write().unwrap();
@@ -382,11 +385,43 @@ extern "C-unwind" fn exec_foreign_delete(
     slot
 }
 
+unsafe fn get_rowid_cell(
+    state: &FdwModifyState,
+    plan_slot: *mut pg_sys::TupleTableSlot,
+) -> Option<Cell> {
+    let mut is_null: bool = true;
+    let datum = slot_getattr(plan_slot, 1, &mut is_null);
+    Cell::from_polymorphic_datum(datum, is_null, state.rowid_typid)
+}
+
+unsafe fn slot_getattr(
+    slot: *mut pg_sys::TupleTableSlot,
+    attnum: c_int,
+    isnull: *mut bool,
+) -> Datum {
+    assert!(attnum > 0);
+
+    if attnum > (*slot).tts_nvalid.into() {
+        pg_sys::slot_getsomeattrs_int(slot, attnum);
+    }
+
+    let attnum = attnum as usize;
+    let values = slice::from_raw_parts((*slot).tts_values, attnum);
+    let nulls = slice::from_raw_parts((*slot).tts_isnull, attnum);
+
+    *isnull = nulls[attnum - 1];
+    values[attnum - 1]
+}
+
+
 #[pg_guard]
 extern "C-unwind" fn end_foreign_modify(
     _estate: *mut pgrx::pg_sys::EState,
     _rinfo: *mut pgrx::pg_sys::ResultRelInfo,
 ) {
     log!("---> end_foreign_modify");
-    // Implementation for ending foreign modify
+    // unsafe {
+    //     let state = PgBox::<FdwModifyState>::from_pg((*_rinfo).ri_FdwState as _);
+    //     let _ = Box::from_raw(state.into_pg());  
+    // }
 }
