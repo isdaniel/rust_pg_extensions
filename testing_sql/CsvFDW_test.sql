@@ -10,7 +10,7 @@ CREATE foreign TABLE users (
     email VARCHAR(100),
     age INT
 ) server csv_server options (
-	 filepath '/home/azureuser/rust_pg_extensions/testing_sql/people_info.csv'
+	 filepath 'replace_with_your_path/people_info.csv'
 );
 
 
