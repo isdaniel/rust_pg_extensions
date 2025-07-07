@@ -1,22 +1,25 @@
 use std::{collections::HashMap, fs::File};
 
+use crate::fdw::utils_share::cell::Cell;
+
 
 #[repr(C)]
+#[derive(Debug)]
 pub struct CsvFdwState {
     pub options : HashMap<String, String>,
-    pub csv_reader : csv::Reader<File>,
+    pub csv_reader : Option<csv::Reader<File>>,
     pub header_name_to_colno: Vec<usize>,
+    pub filters: Vec<(usize, Cell)>,
 }
 
 
 impl CsvFdwState {
-    pub fn new(header_name_to_colno: Vec<usize>,
-               options: HashMap<String, String>,
-               csv_reader : csv::Reader<File> ) -> Self {
+    pub fn new() -> Self {
         CsvFdwState {
-            header_name_to_colno,
-            options,
-            csv_reader
+            header_name_to_colno : Vec::default(),
+            options : HashMap::default(),
+            csv_reader : Option::None,
+            filters : Vec::default(),
         }
     }
 }

@@ -10,7 +10,7 @@ CREATE foreign TABLE users (
     email VARCHAR(100),
     age INT
 ) server csv_server options (
-	 filepath 'replace_with_your_path/people_info.csv'
+	 filepath './testing_sql/people_info.csv'
 );
 
 

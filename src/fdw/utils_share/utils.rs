@@ -1,5 +1,5 @@
 use std::{collections::HashMap, ffi::{c_void, CStr, CString}, num::NonZeroUsize};
-use pgrx::{list, memcx::{self, MemCx}, pg_sys::{self, defGetString, fmgr_info, getTypeInputInfo, list_concat, Datum, FmgrInfo, InputFunctionCall, Oid}, PgBox, PgTupleDesc};
+use pgrx::{list::{self, List}, memcx::{self, MemCx}, pg_sys::{self, defGetString, fmgr_info, getTypeInputInfo, list_concat, Datum, FmgrInfo, InputFunctionCall, Oid}, IntoDatum, FromDatum, PgBox, PgTupleDesc};
 use crate::fdw::utils_share::row::Row;
 use crate::fdw::utils_share::cell::Cell;
 
@@ -213,9 +213,49 @@ pub unsafe fn get_datum(value_str: &str, typid: Oid) -> Datum {
     res
 }
 
-unsafe fn pg_list_to_rust_list<'a, T: list::Enlist>(
+pub unsafe fn pg_list_to_rust_list<'a, T: list::Enlist>(
     list: *mut pg_sys::List,
     mcx: &'a MemCx<'_>,
 ) -> list::List<'a, T> {
     list::List::<T>::downcast_ptr_in_memcx(list, mcx).expect("Failed to downcast list pointer")
+}
+
+
+pub unsafe fn serialize_to_list<T>(state: PgBox<T>) -> *mut pg_sys::List
+where
+    T: Sized,
+{
+    let ret = memcx::current_context(|mcx| {
+        let mut ret = List::<*mut c_void>::Nil;
+        let val = state.into_pg() as i64;
+        let cst: *mut pg_sys::Const = pg_sys::makeConst(
+            pg_sys::INT8OID,
+            -1,
+            pg_sys::InvalidOid,
+            8,
+            val.into_datum().unwrap(),
+            false,
+            true,
+        );
+        ret.unstable_push_in_context(cst as _, mcx);
+        ret.into_ptr()
+    });
+
+    ret
+}
+
+pub unsafe fn deserialize_from_list<T>(list: *mut pg_sys::List) -> PgBox<T>
+where
+    T: Sized,
+{
+    memcx::current_context(|mcx| {
+        if let Some(list) = List::<*mut c_void>::downcast_ptr_in_memcx(list, mcx) {
+            if let Some(cst) = list.get(0) {
+                let cst = *(*cst as *mut pg_sys::Const);
+                let ptr = i64::from_datum(cst.constvalue, cst.constisnull).unwrap();
+                return PgBox::<T>::from_pg(ptr as _);
+            }
+        }
+        PgBox::<T>::null()
+    })
 }

@@ -1,11 +1,12 @@
-use std::{collections::HashMap, ptr};
+use std::{ffi::c_void, ptr};
 use csv::StringRecord;
-use pgrx::{ prelude::*, AllocatedByRust, PgBox
+use pgrx::{ list::{self}, memcx, pg_sys::{Const, Expr, NodeTag, Var}, prelude::*, AllocatedByRust, PgBox
 };
-use crate::fdw::{csv_fdw::state::get_csv_reader, utils_share::utils::{
-        build_attr_name_to_index_map, build_header_index_map, exec_clear_tuple, get_datum, get_foreign_table_options, tuple_desc_attr
-    }};
+use crate::fdw::{csv_fdw::state::get_csv_reader, utils_share::{cell, utils::{
+        build_attr_name_to_index_map, build_header_index_map, deserialize_from_list, exec_clear_tuple, get_datum, get_foreign_table_options, pg_list_to_rust_list, serialize_to_list, tuple_desc_attr
+    }}};
 use crate::fdw::csv_fdw::state::CsvFdwState;
+use crate::fdw::utils_share::cell::Cell;
 
 pub type FdwRoutine<A = AllocatedByRust> = PgBox<pg_sys::FdwRoutine, A>;
 
@@ -18,7 +19,6 @@ pub extern "C" fn csv_fdw_handler() -> FdwRoutine {
         fdw_routine.GetForeignRelSize = Some(get_foreign_rel_size);
         fdw_routine.GetForeignPaths = Some(get_foreign_paths);
         fdw_routine.GetForeignPlan = Some(get_foreign_plan);
-
         // scan phase
         fdw_routine.BeginForeignScan = Some(begin_foreign_scan);
         fdw_routine.IterateForeignScan = Some(iterate_foreign_scan);
@@ -38,30 +38,35 @@ extern "C-unwind" fn get_foreign_rel_size(
     log!("---> get_foreign_rel_size");
     unsafe {
         (*baserel).rows = 1000.0;
+        let state = CsvFdwState::new();
+        (*baserel).fdw_private = Box::into_raw(Box::new(state)) as *mut CsvFdwState as *mut c_void;
     }
 }
 
 #[pg_guard]
 extern "C-unwind" fn get_foreign_paths(
-    _root: *mut pg_sys::PlannerInfo,
+    root: *mut pg_sys::PlannerInfo,
     baserel: *mut pg_sys::RelOptInfo,
     _foreigntableid: pg_sys::Oid,
 ) {
     log!("---> get_foreign_paths");
     unsafe {
+        let startup_cost = 100.0;
+        let total_cost = startup_cost + (*baserel).rows;
+        // create a ForeignPath node and add it as the only possible path
         let path = pg_sys::create_foreignscan_path(
-            _root,
+            root,
             baserel,
-            ptr::null_mut(),           
-            (*baserel).rows,            
-            10.0,                       
-            100.0,                     
-            ptr::null_mut(),            
-            ptr::null_mut(),            
-            ptr::null_mut(),           
-            ptr::null_mut(),           
+            ptr::null_mut(), // default pathtarget
+            (*baserel).rows,
+            startup_cost,
+            total_cost,
+            ptr::null_mut(), // no pathkeys
+            ptr::null_mut(), // no outer rel either
+            ptr::null_mut(), // no extra plan
+            ptr::null_mut(), // no fdw_private data
         );
-        pg_sys::add_path(baserel, path as *mut pg_sys::Path);
+        pg_sys::add_path(baserel, &mut ((*path).path));
     }
 }
 
@@ -76,16 +81,19 @@ unsafe extern "C-unwind" fn get_foreign_plan(
     outer_plan: *mut pg_sys::Plan,
 ) -> *mut pg_sys::ForeignScan {
     log!("---> get_foreign_plan");
+
+    let state = PgBox::<CsvFdwState>::from_pg((*baserel).fdw_private  as _);
     pg_sys::make_foreignscan(
         tlist,
-        scan_clauses,
+        pg_sys::extract_actual_clauses(scan_clauses, false), 
         (*baserel).relid,
         ptr::null_mut(),
-        (*baserel).fdw_private as _,
+        serialize_to_list(state),
         ptr::null_mut(),
         ptr::null_mut(),
         outer_plan,
     )
+
 }
 
 #[pg_guard]
@@ -100,6 +108,8 @@ extern "C-unwind" fn begin_foreign_scan(
 
     log!("---> begin_foreign_scan");
     unsafe {
+        let plan = (*node).ss.ps.plan as *mut pg_sys::ForeignScan;
+        let mut state = deserialize_from_list::<CsvFdwState>((*plan).fdw_private as _);
         let relation = (*node).ss.ss_currentRelation;
         let relid = (*relation).rd_id;
         let options  = get_foreign_table_options(relid);
@@ -107,13 +117,11 @@ extern "C-unwind" fn begin_foreign_scan(
         let mut csv_reader = get_csv_reader(&options);
 
         let header = csv_reader.headers().expect("Failed to read CSV headers");
+
         let header_name_to_colno = build_attr_name_to_index_map(relation);
-
-        let header_name_to_colno = build_header_index_map( header, &header_name_to_colno );
-
-        let state = CsvFdwState::new(header_name_to_colno,options, csv_reader);
-
-        (*node).fdw_state = Box::into_raw(Box::new(state)) as *mut std::os::raw::c_void;
+        state.header_name_to_colno = build_header_index_map( header, &header_name_to_colno );
+        state.csv_reader = Some(csv_reader);
+        (*node).fdw_state = state.into_pg() as *mut c_void;
     }
 }
 
@@ -130,8 +138,16 @@ extern "C-unwind" fn iterate_foreign_scan(
         let slot = (*node).ss.ss_ScanTupleSlot;
         let tupdesc = (*slot).tts_tupleDescriptor;
         exec_clear_tuple(slot);
-        let csv_reader = &mut state.csv_reader;
         let mut record = StringRecord::new();
+        
+        let csv_reader = match state.csv_reader {
+            Some(ref mut reader) => reader,
+            None => {
+                log!("CSV reader is not initialized.");
+                return slot;
+            }
+        };
+
         match csv_reader.read_record(&mut record) {
             Ok(false) => { }
             Ok(true) => {

@@ -114,7 +114,7 @@ unsafe extern "C-unwind" fn get_foreign_plan(
     log!("---> get_foreign_plan");
     pgrx::pg_sys::make_foreignscan(
         tlist,
-        scan_clauses,
+        pg_sys::extract_actual_clauses(scan_clauses, false),
         (*baserel).relid,
         ptr::null_mut(),
         (*baserel).fdw_private as _,
@@ -158,7 +158,7 @@ extern "C-unwind" fn begin_foreign_scan(
 
         log!("Header name to column number mapping: {:?}", state.header_name_to_colno);
         
-        (*node).fdw_state = (*plan).fdw_private as *mut std::os::raw::c_void;
+        (*node).fdw_state = state.into_pg() as _;
     }
 }
 
@@ -368,8 +368,8 @@ extern "C-unwind" fn exec_foreign_delete(
     log!("---> exec_foreign_delete");
     unsafe {
         let state = PgBox::<FdwModifyState>::from_pg((*rinfo).ri_FdwState as _);
-        let cell = get_rowid_cell(&state, plan_slot);
-        log!("Delete operation: rowid cell: {:?}", cell);
+        // let cell = get_rowid_cell(&state, plan_slot);
+        // log!("Delete operation: rowid cell: {:?}", cell);
     }
 
     let mut data = MEMORY_TABLE.write().unwrap();
