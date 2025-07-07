@@ -1,13 +1,9 @@
-use std::{collections::HashMap, fs::File, ptr};
+use std::{collections::HashMap, ptr};
 use csv::StringRecord;
-use pgrx::{ prelude::*, AllocatedByRust, PgBox, PgRelation, PgTupleDesc
+use pgrx::{ prelude::*, AllocatedByRust, PgBox
 };
 use crate::fdw::{csv_fdw::state::get_csv_reader, utils_share::utils::{
-        exec_clear_tuple,
-        get_datum,
-        get_foreign_table_options,
-        string_from_cstr,
-        tuple_desc_attr,
+        build_attr_name_to_index_map, build_header_index_map, exec_clear_tuple, get_datum, get_foreign_table_options, tuple_desc_attr
     }};
 use crate::fdw::csv_fdw::state::CsvFdwState;
 
@@ -37,7 +33,7 @@ pub extern "C" fn csv_fdw_handler() -> FdwRoutine {
 extern "C-unwind" fn get_foreign_rel_size(
     _root: *mut pg_sys::PlannerInfo,
     baserel: *mut pg_sys::RelOptInfo,
-    foreigntableid: pg_sys::Oid,
+    _foreigntableid: pg_sys::Oid,
 ) {
     log!("---> get_foreign_rel_size");
     unsafe {
@@ -108,22 +104,15 @@ extern "C-unwind" fn begin_foreign_scan(
         let relid = (*relation).rd_id;
         let options  = get_foreign_table_options(relid);
         log!("Foreign table options: {:?}", options);
+        let mut csv_reader = get_csv_reader(&options);
 
-        // let header_name_to_colno = {
-        //     let mut map = HashMap::new();
-        //     let rd_att = (*relation).rd_att;
-        //     let natts = (*rd_att).natts;
-        //     for i in 0..natts {
-        //         let attr = tuple_desc_attr(rd_att, i as usize);
-        //         let col_name = string_from_cstr((*attr).attname.data.as_ptr());
-        //         map.insert(col_name, i as usize); 
-        //     }
-        //     map
-        // };
+        let header = csv_reader.headers().expect("Failed to read CSV headers");
+        let header_name_to_colno = build_attr_name_to_index_map(relation);
 
-        let csv_reader = get_csv_reader(&options);
-        let state = CsvFdwState::new(options,csv_reader);
-        
+        let header_name_to_colno = build_header_index_map( header, &header_name_to_colno );
+
+        let state = CsvFdwState::new(header_name_to_colno,options, csv_reader);
+
         (*node).fdw_state = Box::into_raw(Box::new(state)) as *mut std::os::raw::c_void;
     }
 }
@@ -147,10 +136,11 @@ extern "C-unwind" fn iterate_foreign_scan(
             Ok(false) => { }
             Ok(true) => {
                 for (i,field) in record.iter().enumerate(){
-                    let pgtype = (*tuple_desc_attr(tupdesc, i)).atttypid;
+                    let colno = state.header_name_to_colno[i];
+                    let pgtype = (*tuple_desc_attr(tupdesc, colno)).atttypid;
                     let datum_value = get_datum(field, pgtype);
-                    (*slot).tts_values.add(i).write(datum_value);
-                    (*slot).tts_isnull.add(i).write(false);
+                    (*slot).tts_values.add(colno).write(datum_value);
+                    (*slot).tts_isnull.add(colno).write(false);
                 }
                 pg_sys::ExecStoreVirtualTuple(slot);
             }
@@ -181,6 +171,3 @@ extern "C-unwind" fn re_scan_foreign_scan(
     log!("---> re_scan_foreign_scan");
     // Reset or reinitialize scan state here if needed
 }
-
-
-

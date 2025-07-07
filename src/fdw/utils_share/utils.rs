@@ -61,6 +61,35 @@ unsafe fn get_options_from_fdw(relid: Oid) -> *mut pg_sys::List {
     opts_list
 }
 
+pub unsafe fn build_attr_name_to_index_map(
+    relation: pg_sys::Relation,
+) -> HashMap<String, usize> {
+    let mut map = HashMap::new();
+    let rd_att = (*relation).rd_att;
+    let natts = (*rd_att).natts;
+
+    for i in 0..natts {
+        let attr = tuple_desc_attr(rd_att, i as usize);
+        let col_name = string_from_cstr((*attr).attname.data.as_ptr());
+        map.insert(col_name, i as usize);
+    }
+
+    map
+}
+
+pub fn build_header_index_map(
+    headers: &csv::StringRecord,
+    attr_map: &HashMap<String, usize>,
+) -> Vec<usize> {
+    headers
+        .iter()
+        .map(|name| {
+            attr_map.get(name).copied().unwrap_or_else(|| {
+                panic!("CSV header column '{}' not found in relation attributes", name)
+            })
+        })
+        .collect()
+}
 
 // fn another_way_extract_options() {
     // let len = (*opts_list).length;

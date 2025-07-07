@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ffi::{c_int, CStr}, ptr, slice};
+use std::{collections::HashMap, ffi::{c_int}, ptr, slice};
 use once_cell::sync::Lazy;
 use pgrx::{
     pg_sys::{ Datum, Index, ModifyTable, PlannerInfo}, prelude::*, AllocatedByRust, PgBox, PgRelation, PgTupleDesc
@@ -8,12 +8,7 @@ use crate::fdw::utils_share::{
     memory::create_wrappers_memctx,
     row::Row,
     utils::{
-        exec_clear_tuple,
-        get_datum,
-        get_foreign_table_options,
-        string_from_cstr,
-        tuple_desc_attr,
-        tuple_table_slot_to_row,
+        build_attr_name_to_index_map, exec_clear_tuple, get_datum, get_foreign_table_options, string_from_cstr, tuple_desc_attr, tuple_table_slot_to_row
     }
 };
 
@@ -159,17 +154,7 @@ extern "C-unwind" fn begin_foreign_scan(
         let options = get_foreign_table_options(relid);
         log!("Foreign table options: {:?}", options);
 
-        state.header_name_to_colno = {
-            let mut map = HashMap::new();
-            let rd_att = (*relation).rd_att;
-            let natts = (*rd_att).natts;
-            for i in 0..natts {
-                let attr = tuple_desc_attr(rd_att, i as usize);
-                let col_name = string_from_cstr((*attr).attname.data.as_ptr());
-                map.insert(col_name, i as usize); 
-            }
-            map
-        };
+        state.header_name_to_colno = build_attr_name_to_index_map(relation);
 
         log!("Header name to column number mapping: {:?}", state.header_name_to_colno);
         

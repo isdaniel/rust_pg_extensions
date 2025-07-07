@@ -5,13 +5,16 @@ use std::{collections::HashMap, fs::File};
 pub struct CsvFdwState {
     pub options : HashMap<String, String>,
     pub csv_reader : csv::Reader<File>,
+    pub header_name_to_colno: Vec<usize>,
 }
 
 
 impl CsvFdwState {
-    pub fn new(options: HashMap<String, String>,
+    pub fn new(header_name_to_colno: Vec<usize>,
+               options: HashMap<String, String>,
                csv_reader : csv::Reader<File> ) -> Self {
         CsvFdwState {
+            header_name_to_colno,
             options,
             csv_reader
         }
