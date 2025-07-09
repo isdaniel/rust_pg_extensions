@@ -37,8 +37,6 @@ impl FdwModifyState {
             rowid_name: String::default(),
             rowid_attno: 0,
             rowid_typid: Oid::INVALID,
-            #[cfg(feature = "pg13")]
-            update_cols: Vec::new(),
         }
     }
 }
