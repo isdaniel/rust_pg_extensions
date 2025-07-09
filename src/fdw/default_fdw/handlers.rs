@@ -242,33 +242,6 @@ unsafe extern "C-unwind" fn add_foreign_update_targets(
     target_relation: pgrx::pg_sys::Relation,
 ) {
     log!("---> add_foreign_update_targets");
-    if let Some(attr) = find_rowid_column(target_relation) {
-        // make a Var representing the desired value
-        info!("Adding foreign update target for rowid column: {}", pgrx::name_data_to_str(&attr.attname));
-        let var = pg_sys::makeVar(
-            (*parsetree).resultRelation as _,
-            attr.attnum,
-            attr.atttypid,
-            attr.atttypmod,
-            attr.attcollation,
-            0,
-        );
-        //resultRelation
-        info!("resultRelation: {}", (*parsetree).resultRelation);
-        let a = (*parsetree).targetList;
-        let target_index = ((*a).length + 1) as i16;
-
-        // wrap the var in a resjunk TLE
-        let tle = pg_sys::makeTargetEntry(
-            var as _,
-            target_index,
-            pg_sys::pstrdup(attr.attname.data.as_ptr()),
-            true,
-        );
-
-        // add it to the query's target list
-        (*parsetree).targetList = pg_sys::lappend((*parsetree).targetList, tle as _);
-    }
 }
 
 unsafe fn find_rowid_column(
