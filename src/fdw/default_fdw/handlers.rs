@@ -1,14 +1,14 @@
 use std::{collections::HashMap, ffi::{c_int, c_void, CStr, CString}, ptr, slice};
 use once_cell::sync::Lazy;
 use pgrx::{
-    memcx, pg_sys::{ Datum, Index, ModifyTable, PlannerInfo}, prelude::*, AllocatedByRust, PgBox, PgMemoryContexts, PgRelation, PgTupleDesc
+    memcx, pg_sys::{ Datum, Index, MemoryContextData, ModifyTable, PlannerInfo}, prelude::*, AllocatedByRust, PgBox, PgMemoryContexts, PgRelation, PgTupleDesc
 };
 use crate::fdw::utils_share::{
     cell::Cell,
     memory::create_wrappers_memctx,
     row::Row,
     utils::{
-        build_attr_name_to_index_map, deserialize_from_list, exec_clear_tuple, get_datum, get_foreign_table_options, pg_list_to_rust_list, serialize_to_list, string_from_cstr, tuple_desc_attr, tuple_table_slot_to_row
+        build_attr_name_to_index_map, delete_wrappers_memctx, deserialize_from_list, exec_clear_tuple, get_datum, get_foreign_table_options, pg_list_to_rust_list, serialize_to_list, string_from_cstr, tuple_desc_attr, tuple_table_slot_to_row
     }
 };
 
@@ -221,8 +221,15 @@ extern "C-unwind" fn end_foreign_scan(
 ) {
     log!("---> end_foreign_scan");
     unsafe {
-        let state = (*node).fdw_state as *mut DefaultFdwState;
-        let _ = Box::from_raw(state);
+        let fdw_state = (*node).fdw_state as *mut DefaultFdwState;
+        if fdw_state.is_null() {
+            return;
+        }
+        let mut state = PgBox::<DefaultFdwState>::from_pg(fdw_state);
+        delete_wrappers_memctx(state.tmp_ctx);
+        state.tmp_ctx = ptr::null::<MemoryContextData>() as _;
+        
+        let _ = Box::from_raw(fdw_state);
     }
 }
 
