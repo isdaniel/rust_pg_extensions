@@ -11,18 +11,12 @@ pub struct DefaultFdwState {
 }
 
 #[repr(C)]
+#[derive(Debug)]
 pub struct FdwModifyState {
     // row id attribute number and type id
     pub rowid_name: String,
     pub rowid_attno: pgrx::pg_sys::AttrNumber,
     pub rowid_typid: Oid,
-
-    // temporary memory context per foreign table, created under Wrappers root
-    // memory context
-    pub tmp_ctx: MemoryContext,
-
-    #[cfg(feature = "pg13")]
-    pub update_cols: Vec<String>,
 }
 
 impl DefaultFdwState {
@@ -38,12 +32,11 @@ impl DefaultFdwState {
 }
 
 impl FdwModifyState {
-    pub fn new(_ftable_id: pgrx::pg_sys::Oid, tmp_ctx: MemoryContext) -> Self {
+    pub fn new() -> Self {
        Self {
             rowid_name: String::default(),
             rowid_attno: 0,
             rowid_typid: Oid::INVALID,
-            tmp_ctx,
             #[cfg(feature = "pg13")]
             update_cols: Vec::new(),
         }

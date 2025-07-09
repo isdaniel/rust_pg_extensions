@@ -1,12 +1,10 @@
 use std::{ffi::c_void, ptr};
 use csv::StringRecord;
-use pgrx::{ list::{self}, memcx, pg_sys::{Const, Expr, NodeTag, Var}, prelude::*, AllocatedByRust, PgBox
-};
-use crate::fdw::{csv_fdw::state::get_csv_reader, utils_share::{cell, utils::{
-        build_attr_name_to_index_map, build_header_index_map, deserialize_from_list, exec_clear_tuple, get_datum, get_foreign_table_options, pg_list_to_rust_list, serialize_to_list, tuple_desc_attr
+use pgrx::{ list::{self}, pg_sys::{Const, Expr, NodeTag, Var}, prelude::*, AllocatedByRust, PgBox };
+use crate::fdw::{csv_fdw::state::get_csv_reader, utils_share::{utils::{
+        build_attr_name_to_index_map, build_header_index_map, deserialize_from_list, exec_clear_tuple, get_datum, get_foreign_table_options, serialize_to_list, string_to_cstr, tuple_desc_attr
     }}};
 use crate::fdw::csv_fdw::state::CsvFdwState;
-use crate::fdw::utils_share::cell::Cell;
 
 pub type FdwRoutine<A = AllocatedByRust> = PgBox<pg_sys::FdwRoutine, A>;
 
@@ -19,6 +17,8 @@ pub extern "C" fn csv_fdw_handler() -> FdwRoutine {
         fdw_routine.GetForeignRelSize = Some(get_foreign_rel_size);
         fdw_routine.GetForeignPaths = Some(get_foreign_paths);
         fdw_routine.GetForeignPlan = Some(get_foreign_plan);
+        fdw_routine.ExplainForeignScan = Some(explain_foreign_scan);
+
         // scan phase
         fdw_routine.BeginForeignScan = Some(begin_foreign_scan);
         fdw_routine.IterateForeignScan = Some(iterate_foreign_scan);
@@ -102,10 +102,6 @@ extern "C-unwind" fn begin_foreign_scan(
     eflags: ::std::os::raw::c_int,
 ) {
 
-    if eflags & pg_sys::EXEC_FLAG_EXPLAIN_ONLY as i32 != 0 {
-        return;
-    }
-
     log!("---> begin_foreign_scan");
     unsafe {
         let plan = (*node).ss.ps.plan as *mut pg_sys::ForeignScan;
@@ -114,13 +110,15 @@ extern "C-unwind" fn begin_foreign_scan(
         let relid = (*relation).rd_id;
         let options  = get_foreign_table_options(relid);
         log!("Foreign table options: {:?}", options);
-        let mut csv_reader = get_csv_reader(&options);
+        let file_path = options.get("filepath").cloned().unwrap_or_default();
+        let mut csv_reader = get_csv_reader(&file_path);
 
         let header = csv_reader.headers().expect("Failed to read CSV headers");
 
         let header_name_to_colno = build_attr_name_to_index_map(relation);
         state.header_name_to_colno = build_header_index_map( header, &header_name_to_colno );
         state.csv_reader = Some(csv_reader);
+        state.file_path = file_path;
         (*node).fdw_state = state.into_pg() as *mut c_void;
     }
 }
@@ -186,4 +184,32 @@ extern "C-unwind" fn re_scan_foreign_scan(
 ) {
     log!("---> re_scan_foreign_scan");
     // Reset or reinitialize scan state here if needed
+}
+
+#[pg_guard]
+unsafe extern "C-unwind" fn explain_foreign_scan(
+    node: *mut pgrx::pg_sys::ForeignScanState,
+    es: *mut pgrx::pg_sys::ExplainState,
+) {
+    log!("---> explain_foreign_scan");
+
+    let fs_state = (*node).fdw_state as *mut CsvFdwState;
+    if fs_state.is_null() {
+        return;
+    }
+
+    let state = &*fs_state;
+    
+    pg_sys::ExplainPropertyText(
+        string_to_cstr("CSV Filepath").as_ptr(),
+        string_to_cstr(&state.file_path).as_ptr(),
+        es,
+    );
+
+    let col_count = state.header_name_to_colno.len().to_string();
+    pg_sys::ExplainPropertyText(
+        string_to_cstr("Mapped Columns").as_ptr(),
+        string_to_cstr(&col_count).as_ptr(),
+        es,
+    );
 }

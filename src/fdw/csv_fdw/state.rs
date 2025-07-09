@@ -10,6 +10,7 @@ pub struct CsvFdwState {
     pub csv_reader : Option<csv::Reader<File>>,
     pub header_name_to_colno: Vec<usize>,
     pub filters: Vec<(usize, Cell)>,
+    pub file_path: String,
 }
 
 
@@ -20,6 +21,7 @@ impl CsvFdwState {
             options : HashMap::default(),
             csv_reader : Option::None,
             filters : Vec::default(),
+            file_path: String::new(),
         }
     }
 }
@@ -33,8 +35,7 @@ struct User {
 }
 
 
-pub fn get_csv_reader(options: &HashMap<String, String>) -> csv::Reader<File> {
-    let file_path = options.get("filepath").expect("CSV file path must be provided in options");
+pub fn get_csv_reader(file_path:&str) -> csv::Reader<File> {
     let file = File::open(file_path).expect(&format!("Failed to open CSV file: {}", file_path));
     csv::Reader::from_reader(file)
 }
