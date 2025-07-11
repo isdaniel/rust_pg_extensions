@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ffi::{c_void, CStr, CString}, num::NonZeroUsize};
+use std::{collections::HashMap, ffi::{c_int, c_void, CStr, CString}, num::NonZeroUsize, slice};
 use pgrx::{list::{self, List}, memcx::{self, MemCx}, pg_sys::{self, defGetString, fmgr_info, getTypeInputInfo, list_concat, Datum, FmgrInfo, InputFunctionCall, MemoryContext, Oid}, FromDatum, IntoDatum, PgBox, PgTupleDesc};
 use crate::fdw::utils_share::row::Row;
 use crate::fdw::utils_share::cell::Cell;
@@ -123,11 +123,39 @@ pub fn build_header_index_map(
 /// A pointer to the `FormData_pg_attribute` structure for the specified attribute number.
 /// # Note
 /// The attribute number is 1-based, meaning that `attnum = 1` corresponds to the first attribute in the tuple descriptor.
-
+#[inline]
 pub unsafe fn tuple_desc_attr(tupdesc: pg_sys::TupleDesc, attnum: usize) -> *const pg_sys::FormData_pg_attribute {
      (*tupdesc).attrs.as_mut_ptr().add(attnum)
 }
 
+/// Clear the contents of a `TupleTableSlot`
+/// This function is unsafe because it dereferences raw pointers and assumes that the `TupleTableSlot
+/// is valid and properly initialized.
+/// # Arguments
+/// * `slot`: A pointer to a `TupleTableSlot` structure.
+/// # Note
+/// This function calls the `clear` method of the `tts_ops` structure associated with the
+/// `TupleTableSlot`. It is intended to reset the slot to an empty state, clearing any data it holds.
+/// The `tts_ops` structure contains function pointers for various operations on the slot, and the
+/// `clear` function is expected to be defined for the specific slot type being used.
+/// If the `clear` function is not defined, this function will do nothing.
+/// It is the caller's responsibility to ensure that the `TupleTableSlot` is valid and
+/// that the `tts_ops` structure is properly initialized.
+/// This function is typically used in the context of PostgreSQL foreign data wrappers (FDWs)
+/// to reset the slot before reusing it for a new tuple.
+/// It is important to ensure that the slot is not in use by any other operation when calling this function, as it will clear the contents of the slot and may lead to undefined behavior if the slot is still being accessed elsewhere.
+/// # Safety
+/// This function is unsafe because it dereferences raw pointers and assumes that the `TupleTableSlot
+/// is valid and properly initialized. It is the caller's responsibility to ensure that the slot
+/// is in a valid state before calling this function. If the slot is not valid, dere
+/// ferencing it may lead to undefined behavior, including segmentation faults or data corruption.
+/// It is also the caller's responsibility to ensure that the `tts_ops` structure is properly
+/// initialized and that the `clear` function is defined for the specific slot type being used.
+/// If the `clear` function is not defined, this function will do nothing, but it
+/// is still considered unsafe because it dereferences raw pointers and assumes that the
+/// `TupleTableSlot` is valid.
+/// It is recommended to use this function only in the context of PostgreSQL foreign data wrappers (FDWs) or other PostgreSQL extensions where the `TupleTableSlot` is properly managed and initialized.
+#[inline]
 pub unsafe fn exec_clear_tuple(slot: *mut pgrx::pg_sys::TupleTableSlot) {
     if let Some(clear) = (*(*slot).tts_ops).clear {
         clear(slot);
@@ -189,6 +217,7 @@ pub fn string_from_cstr(c_str: *const i8) -> String {
 /// This function is intended for use when passing strings to C APIs that expect null-terminated strings
 /// and do not allow null bytes within the string.
 /// It is safe to use as long as the input string does not contain null bytes.
+#[inline]
 pub fn string_to_cstr(s: &str) -> CString {
     CString::new(s).unwrap()
 }
@@ -281,4 +310,25 @@ pub unsafe fn delete_wrappers_memctx(ctx: MemoryContext) {
         pg_sys::MemoryContextDelete(ctx)
     }
 }
+
+
+pub unsafe fn find_rowid_column(
+    target_relation: pg_sys::Relation,
+) -> Option<pg_sys::FormData_pg_attribute> {
+    // get rowid column name from table options
+    //todo
+    let rowid_name = "id";
+
+    // find rowid attribute
+    let tup_desc = PgTupleDesc::from_pg_copy((*target_relation).rd_att);
+    for attr in tup_desc.iter().filter(|a| !a.is_dropped()) {
+        if pgrx::name_data_to_str(&attr.attname) == rowid_name {
+            return Some(*attr);
+        }
+    }
+
+    None
+}
+
+
 

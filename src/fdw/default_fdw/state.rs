@@ -17,6 +17,7 @@ pub struct FdwModifyState {
     pub rowid_name: String,
     pub rowid_attno: pgrx::pg_sys::AttrNumber,
     pub rowid_typid: Oid,
+    pub tmp_ctx: MemoryContext,
 }
 
 impl DefaultFdwState {
@@ -32,11 +33,12 @@ impl DefaultFdwState {
 }
 
 impl FdwModifyState {
-    pub fn new() -> Self {
+    pub fn new(tmp_ctx: MemoryContext) -> Self {
        Self {
             rowid_name: String::default(),
             rowid_attno: 0,
             rowid_typid: Oid::INVALID,
+            tmp_ctx
         }
     }
 }

@@ -1,14 +1,13 @@
-use std::{collections::HashMap, ffi::{c_int, c_void, CStr, CString}, ptr, slice};
+use std::{collections::HashMap, ffi::{c_int}, ptr, slice};
 use once_cell::sync::Lazy;
-use pgrx::{
-    memcx, pg_sys::{ Datum, Index, MemoryContextData, ModifyTable, PlannerInfo}, prelude::*, AllocatedByRust, PgBox, PgMemoryContexts, PgRelation, PgTupleDesc
+use pgrx::{ pg_sys::{ Datum, Index, MemoryContextData, ModifyTable, PlannerInfo, TargetEntry}, prelude::*, AllocatedByRust, PgBox, PgMemoryContexts, PgRelation, PgTupleDesc
 };
 use crate::fdw::utils_share::{
     cell::Cell,
     memory::create_wrappers_memctx,
     row::Row,
     utils::{
-        build_attr_name_to_index_map, delete_wrappers_memctx, deserialize_from_list, exec_clear_tuple, get_datum, get_foreign_table_options, pg_list_to_rust_list, serialize_to_list, string_from_cstr, tuple_desc_attr, tuple_table_slot_to_row
+        build_attr_name_to_index_map, delete_wrappers_memctx, deserialize_from_list, exec_clear_tuple, get_datum, get_foreign_table_options, serialize_to_list, tuple_desc_attr, tuple_table_slot_to_row
     }
 };
 
@@ -251,24 +250,6 @@ unsafe extern "C-unwind" fn add_foreign_update_targets(
     log!("---> add_foreign_update_targets");
 }
 
-unsafe fn find_rowid_column(
-    target_relation: pg_sys::Relation,
-) -> Option<pg_sys::FormData_pg_attribute> {
-    // get rowid column name from table options
-    //todo
-    let rowid_name = "id";
-
-    // find rowid attribute
-    let tup_desc = PgTupleDesc::from_pg_copy((*target_relation).rd_att);
-    for attr in tup_desc.iter().filter(|a| !a.is_dropped()) {
-        if pgrx::name_data_to_str(&attr.attname) == rowid_name {
-            return Some(*attr);
-        }
-    }
-
-    None
-}
-
 
 #[cfg(not(feature = "pg13"))]
 #[pg_guard]
@@ -278,6 +259,8 @@ unsafe extern "C-unwind" fn add_foreign_update_targets(
     _target_rte: *mut pgrx::pg_sys::RangeTblEntry,
     target_relation: pgrx::pg_sys::Relation,
 ) {
+    use crate::fdw::utils_share::utils::find_rowid_column;
+
     log!("---> add_foreign_update_targets");
     if let Some(attr) = find_rowid_column(target_relation) {
         // make a Var representing the desired value
@@ -309,12 +292,14 @@ unsafe extern "C-unwind" fn plan_foreign_modify(
     let rel = PgRelation::with_lock((*rte).relid, pg_sys::NoLock as _);
     // search for rowid attribute in tuple descrition
     let tup_desc = PgTupleDesc::from_relation(&rel);
-    let rowid_name = "id"; // todo
+    let rowid_name = "id"; //todo = 
     for attr in tup_desc.iter().filter(|a| !a.attisdropped) {
         let attname = pgrx::name_data_to_str(&attr.attname);
         if attname == rowid_name {
-            // create modify state
-            let mut state = FdwModifyState::new();
+            let ftable_id = rel.oid();
+            let ctx_name = format!("Wrappers_modify_{}", ftable_id.to_u32());
+            let ctx = create_wrappers_memctx(&ctx_name);
+            let mut state = FdwModifyState::new(ctx);
 
             state.rowid_name = rowid_name.to_string();
             state.rowid_typid = attr.atttypid;
@@ -344,7 +329,7 @@ extern "C-unwind" fn begin_foreign_modify(
         let mut state = deserialize_from_list::<FdwModifyState>(fdw_private as _);
          // search for rowid attribute number
         let subplan = (*outer_plan_state(&mut (*mtstate).ps)).plan;
-        let rowid_name_c = &state.rowid_name as *const _ as *const i8;
+        let rowid_name_c = PgMemoryContexts::For(state.tmp_ctx).pstrdup(&state.rowid_name);
         state.rowid_attno = pg_sys::ExecFindJunkAttributeInTlist((*subplan).targetlist, rowid_name_c);
         info!("Rowid attribute number: {}, state.rowid_name {}", state.rowid_attno, state.rowid_name);
         (*rinfo).ri_FdwState = state.into_pg() as *mut std::os::raw::c_void;
@@ -410,39 +395,39 @@ extern "C-unwind" fn exec_foreign_delete(
 ) -> *mut pgrx::pg_sys::TupleTableSlot {
     log!("---> exec_foreign_delete");
     unsafe {
-        let mut state = PgBox::<FdwModifyState>::from_pg((*rinfo).ri_FdwState as _);
-        if let Some(rowid_cell) = get_rowid_cell(&state, slot) {
-            log!("Delete operation: rowid = {:?}", rowid_cell);
-
-            let rowid_column = ""; // e.g., "id"
-
-            let mut table = MEMORY_TABLE.write().unwrap();
-            if let Some(pos) = table.iter().position(|row| {
-                if let Some(val) = row.get(rowid_column) {
-                    // Match string representation
-                    val == &rowid_cell.to_string()
+        let state = PgBox::<FdwModifyState>::from_pg((*rinfo).ri_FdwState as _);
+        let mut table = MEMORY_TABLE.write().unwrap();
+        PgMemoryContexts::For(state.tmp_ctx).switch_to(|_| {
+            let cell = get_rowid_cell(&state, plan_slot);
+            if let Some(rowid) = cell {
+                info!("rowid :{:?}",rowid);
+                let row_key = rowid.to_string();
+                if let Some(index) = table.iter().position(|map| map.get(&state.rowid_name) == Some(&row_key)) {
+                    table.remove(index);
                 } else {
-                    false
+                    info!("Row with id {} not found for deletion", rowid);
                 }
-            }) {
-                log!("Deleting row at index: {}", pos);
-                table.remove(pos);
-            } else {
-                log!("Row not found for deletion");
             }
-        } else {
-            log!("Could not extract rowid from slot");
-        }
+        });
     }
-
-    // let mut data = MEMORY_TABLE.write().unwrap();
-    // data.clear();
-
     slot
 
 }
 
-unsafe fn get_rowid_cell(
+#[pg_guard]
+extern "C-unwind" fn end_foreign_modify(
+    _estate: *mut pgrx::pg_sys::EState,
+    _rinfo: *mut pgrx::pg_sys::ResultRelInfo,
+) {
+    log!("---> end_foreign_modify");
+    // unsafe {
+    //     let state = PgBox::<FdwModifyState>::from_pg((*_rinfo).ri_FdwState as _);
+    //     let _ = Box::from_raw(state.into_pg());  
+    // }
+}
+
+
+pub unsafe fn get_rowid_cell(
     state: &FdwModifyState,
     plan_slot: *mut pg_sys::TupleTableSlot,
 ) -> Option<Cell> {
@@ -451,7 +436,7 @@ unsafe fn get_rowid_cell(
     Cell::from_polymorphic_datum(datum, is_null, state.rowid_typid)
 }
 
-unsafe fn slot_getattr(
+pub unsafe fn slot_getattr(
     slot: *mut pg_sys::TupleTableSlot,
     attnum: c_int,
     isnull: *mut bool,
@@ -468,17 +453,4 @@ unsafe fn slot_getattr(
 
     *isnull = nulls[attnum - 1];
     values[attnum - 1]
-}
-
-
-#[pg_guard]
-extern "C-unwind" fn end_foreign_modify(
-    _estate: *mut pgrx::pg_sys::EState,
-    _rinfo: *mut pgrx::pg_sys::ResultRelInfo,
-) {
-    log!("---> end_foreign_modify");
-    // unsafe {
-    //     let state = PgBox::<FdwModifyState>::from_pg((*_rinfo).ri_FdwState as _);
-    //     let _ = Box::from_raw(state.into_pg());  
-    // }
 }
