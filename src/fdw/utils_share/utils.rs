@@ -1,5 +1,5 @@
 use std::{collections::HashMap, ffi::{c_int, c_void, CStr, CString}, num::NonZeroUsize, slice};
-use pgrx::{list::{self, List}, memcx::{self, MemCx}, pg_sys::{self, defGetString, fmgr_info, getTypeInputInfo, list_concat, Datum, FmgrInfo, InputFunctionCall, MemoryContext, Oid}, FromDatum, IntoDatum, PgBox, PgTupleDesc};
+use pgrx::{list::{self, List}, memcx::{self, MemCx}, pg_sys::{self, defGetString, fmgr_info, getTypeInputInfo, list_concat, Datum, FmgrInfo, InputFunctionCall, MemoryContext, Oid}, FromDatum, IntoDatum, PgBox, PgRelation, PgTupleDesc};
 use crate::fdw::utils_share::row::Row;
 use crate::fdw::utils_share::cell::Cell;
 
@@ -329,6 +329,3 @@ pub unsafe fn find_rowid_column(
 
     None
 }
-
-
-

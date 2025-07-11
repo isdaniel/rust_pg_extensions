@@ -1,16 +1,15 @@
 use std::{collections::HashMap, ffi::{c_int}, ptr, slice};
 use once_cell::sync::Lazy;
-use pgrx::{ pg_sys::{ Datum, Index, MemoryContextData, ModifyTable, PlannerInfo, TargetEntry}, prelude::*, AllocatedByRust, PgBox, PgMemoryContexts, PgRelation, PgTupleDesc
+use pgrx::{ pg_sys::{ CmdType, Datum, Index, MemoryContextData, ModifyTable, PlannerInfo, TargetEntry}, prelude::*, AllocatedByRust, PgBox, PgMemoryContexts, PgRelation, PgTupleDesc
 };
 use crate::fdw::utils_share::{
     cell::Cell,
     memory::create_wrappers_memctx,
     row::Row,
     utils::{
-        build_attr_name_to_index_map, delete_wrappers_memctx, deserialize_from_list, exec_clear_tuple, get_datum, get_foreign_table_options, serialize_to_list, tuple_desc_attr, tuple_table_slot_to_row
+        build_attr_name_to_index_map, delete_wrappers_memctx, deserialize_from_list, exec_clear_tuple, get_datum, get_foreign_table_options, serialize_to_list, tuple_desc_attr, tuple_table_slot_to_row,find_rowid_column
     }
 };
-
 use crate::fdw::default_fdw::state::{DefaultFdwState, FdwModifyState};
 
 type TableMap = HashMap<String, String>;
@@ -186,27 +185,6 @@ extern "C-unwind" fn iterate_foreign_scan(
             (*slot).tts_isnull.add(colno).write(false);
         }
 
-        // state.values.clear();
-        // state.nulls.clear();
-        // for i in 0..natts {
-        //     let attr = tuple_desc_attr(tupdesc, i);
-        //     let col_name = string_from_cstr((*attr).attname.data.as_ptr());
-        //     match tuple_row.get(&col_name) {
-        //         Some(val) => {
-        //             log!("iterate_foreign_scan => Column: {}, Value: {}", col_name, val);
-
-        //             let datum = parse_cell(val).into_datum().unwrap();
-        //             state.values.push(datum);
-        //             state.nulls.push(false);
-        //         }
-        //         None => {
-        //             state.nulls.push(true);
-        //         }
-        //     }
-        // }
-        
-        // (*slot).tts_values = state.values.as_mut_ptr();
-        // (*slot).tts_isnull = state.nulls.as_mut_ptr();
         pgrx::pg_sys::ExecStoreVirtualTuple(slot);
         
         state.row_count += 1;
@@ -259,8 +237,7 @@ unsafe extern "C-unwind" fn add_foreign_update_targets(
     _target_rte: *mut pgrx::pg_sys::RangeTblEntry,
     target_relation: pgrx::pg_sys::Relation,
 ) {
-    use crate::fdw::utils_share::utils::find_rowid_column;
-
+ 
     log!("---> add_foreign_update_targets");
     if let Some(attr) = find_rowid_column(target_relation) {
         // make a Var representing the desired value
@@ -282,16 +259,26 @@ unsafe extern "C-unwind" fn add_foreign_update_targets(
 #[pg_guard]
 unsafe extern "C-unwind" fn plan_foreign_modify(
     root: *mut PlannerInfo,
-    _plan: *mut ModifyTable,
+    plan: *mut ModifyTable,
     result_relation: Index,
     _subplan_index: ::core::ffi::c_int,
 ) -> *mut pgrx::pg_sys::List {
     log!("---> plan_foreign_modify");
-
+    //	RelOptInfo *rel = find_base_rel(root PlannerInfo, resultRelation Index);
     let rte = pg_sys::planner_rt_fetch(result_relation, root);
     let rel = PgRelation::with_lock((*rte).relid, pg_sys::NoLock as _);
     // search for rowid attribute in tuple descrition
     let tup_desc = PgTupleDesc::from_relation(&rel);
+
+    let cmd: CmdType::Type = (*plan).operation;
+    match cmd {
+        CmdType::CMD_DELETE => info!("DELETE Ops!"),
+        CmdType::CMD_INSERT => info!("INSERT Ops!"),
+        CmdType::CMD_UPDATE => info!("UPDATE Ops!"),
+        CmdType::CMD_NOTHING => info!("NOTHING Ops!"),
+        _ => info!("{} Ops!",cmd)
+    }
+    
     let rowid_name = "id"; //todo = 
     for attr in tup_desc.iter().filter(|a| !a.attisdropped) {
         let attname = pgrx::name_data_to_str(&attr.attname);
@@ -417,13 +404,20 @@ extern "C-unwind" fn exec_foreign_delete(
 #[pg_guard]
 extern "C-unwind" fn end_foreign_modify(
     _estate: *mut pgrx::pg_sys::EState,
-    _rinfo: *mut pgrx::pg_sys::ResultRelInfo,
+    rinfo: *mut pgrx::pg_sys::ResultRelInfo,
 ) {
     log!("---> end_foreign_modify");
-    // unsafe {
-    //     let state = PgBox::<FdwModifyState>::from_pg((*_rinfo).ri_FdwState as _);
-    //     let _ = Box::from_raw(state.into_pg());  
-    // }
+    unsafe { 
+        let fdw_state = (*rinfo).ri_FdwState as *mut FdwModifyState;
+        if fdw_state.is_null() {
+            return;
+        }
+
+        let mut state: PgBox<FdwModifyState> = PgBox::<FdwModifyState>::from_pg(fdw_state as _);
+        delete_wrappers_memctx(state.tmp_ctx);
+        state.tmp_ctx = ptr::null::<MemoryContextData>() as _;
+        let _ =  Box::from_raw(fdw_state);
+    }
 }
 
 
