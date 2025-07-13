@@ -2,9 +2,10 @@ use std::{collections::HashMap, ffi::{c_int, c_void, CStr, CString}, num::NonZer
 use pgrx::{list::{self, List}, memcx::{self, MemCx}, pg_sys::{self, defGetString, fmgr_info, getTypeInputInfo, list_concat, Datum, FmgrInfo, InputFunctionCall, MemoryContext, Oid}, FromDatum, IntoDatum, PgBox, PgRelation, PgTupleDesc};
 use crate::fdw::utils_share::row::Row;
 use crate::fdw::utils_share::cell::Cell;
-
 #[cfg(any(feature = "pg13", feature = "pg14"))]
 use pgrx::pg_sys::Value;
+
+pub static ROWID : &str = "id";
 
 #[cfg(any(feature = "pg15", feature = "pg16"))] 
 #[repr(C)]
@@ -317,7 +318,7 @@ pub unsafe fn find_rowid_column(
 ) -> Option<pg_sys::FormData_pg_attribute> {
     // get rowid column name from table options
     //todo
-    let rowid_name = "id";
+    let rowid_name = ROWID;
 
     // find rowid attribute
     let tup_desc = PgTupleDesc::from_pg_copy((*target_relation).rd_att);

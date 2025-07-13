@@ -7,7 +7,7 @@ use crate::fdw::utils_share::{
     memory::create_wrappers_memctx,
     row::Row,
     utils::{
-        build_attr_name_to_index_map, delete_wrappers_memctx, deserialize_from_list, exec_clear_tuple, get_datum, get_foreign_table_options, serialize_to_list, tuple_desc_attr, tuple_table_slot_to_row,find_rowid_column
+        self, build_attr_name_to_index_map, delete_wrappers_memctx, deserialize_from_list, exec_clear_tuple, find_rowid_column, get_datum, get_foreign_table_options, serialize_to_list, tuple_desc_attr, tuple_table_slot_to_row
     }
 };
 use crate::fdw::default_fdw::state::{DefaultFdwState, FdwModifyState};
@@ -43,6 +43,7 @@ pub extern "C" fn default_fdw_handler() -> FdwRoutine {
         fdw_routine.ExecForeignDelete = Some(exec_foreign_delete);
         fdw_routine.ExecForeignUpdate = Some(exec_foreign_update);
         fdw_routine.EndForeignModify = Some(end_foreign_modify);
+        //fdw_routine.IsForeignRelUpdatable =
 
         fdw_routine
     }
@@ -279,7 +280,7 @@ unsafe extern "C-unwind" fn plan_foreign_modify(
         _ => info!("{} Ops!",cmd)
     }
     
-    let rowid_name = "id"; //todo = 
+    let rowid_name = utils::ROWID; //todo
     for attr in tup_desc.iter().filter(|a| !a.attisdropped) {
         let attname = pgrx::name_data_to_str(&attr.attname);
         if attname == rowid_name {
@@ -364,13 +365,34 @@ extern "C-unwind" fn exec_foreign_insert(
 #[pg_guard]
 extern "C-unwind" fn exec_foreign_update(
     _estate: *mut pgrx::pg_sys::EState,
-    _rinfo: *mut pgrx::pg_sys::ResultRelInfo,
-    _slot: *mut pgrx::pg_sys::TupleTableSlot,
-    _plan_slot: *mut pgrx::pg_sys::TupleTableSlot,
+    rinfo: *mut pgrx::pg_sys::ResultRelInfo,
+    slot: *mut pgrx::pg_sys::TupleTableSlot,
+    plan_slot: *mut pgrx::pg_sys::TupleTableSlot,
 ) -> *mut pgrx::pg_sys::TupleTableSlot {
     log!("---> exec_foreign_update");
-    unsafe { (*_slot).tts_tableOid = pgrx::pg_sys::InvalidOid };
-    _slot
+    unsafe {
+        let state = PgBox::<FdwModifyState>::from_pg((*rinfo).ri_FdwState as _);
+        let mut table = MEMORY_TABLE.write().unwrap();
+        PgMemoryContexts::For(state.tmp_ctx).switch_to(|_| {
+            let new_row = tuple_table_slot_to_row(plan_slot); 
+            for (i, col) in new_row.cols.iter().enumerate() {
+                if col == utils::ROWID {
+                    if let Some(index) = table.iter().position(|map| {
+                        map.get(utils::ROWID).unwrap().to_string() == new_row.cells[i].as_ref().unwrap().to_string()
+                    }) {
+                        info!("Found row to update with rowid: {:?}", new_row.cells[i]);
+                        for (j, col_name) in new_row.cols.iter().enumerate() {
+                            table[index].get_mut(col_name).map(|v| 
+                                *v = new_row.cells[j].as_ref().map_or("NULL".to_string(), |c| c.to_string())
+                            );
+                        }
+                    }
+                    break;
+                }
+            }
+        });
+    }
+    slot
 }
 
 #[pg_guard]
@@ -386,8 +408,8 @@ extern "C-unwind" fn exec_foreign_delete(
         let mut table = MEMORY_TABLE.write().unwrap();
         PgMemoryContexts::For(state.tmp_ctx).switch_to(|_| {
             let cell = get_rowid_cell(&state, plan_slot);
+            info!("cell :{:?}",cell);
             if let Some(rowid) = cell {
-                info!("rowid :{:?}",rowid);
                 let row_key = rowid.to_string();
                 if let Some(index) = table.iter().position(|map| map.get(&state.rowid_name) == Some(&row_key)) {
                     table.remove(index);
