@@ -5,7 +5,7 @@ use crate::fdw::utils_share::cell::Cell;
 #[cfg(any(feature = "pg13", feature = "pg14"))]
 use pgrx::pg_sys::Value;
 
-pub static ROWID : &str = "id";
+pub static ROWID : &str = "id"; //todo
 
 #[cfg(any(feature = "pg15", feature = "pg16"))] 
 #[repr(C)]

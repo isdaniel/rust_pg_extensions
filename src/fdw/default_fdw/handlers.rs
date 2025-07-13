@@ -374,20 +374,33 @@ extern "C-unwind" fn exec_foreign_update(
         let state = PgBox::<FdwModifyState>::from_pg((*rinfo).ri_FdwState as _);
         let mut table = MEMORY_TABLE.write().unwrap();
         PgMemoryContexts::For(state.tmp_ctx).switch_to(|_| {
-            let new_row = tuple_table_slot_to_row(plan_slot); 
-            for (i, col) in new_row.cols.iter().enumerate() {
-                if col == utils::ROWID {
-                    if let Some(index) = table.iter().position(|map| {
-                        map.get(utils::ROWID).unwrap().to_string() == new_row.cells[i].as_ref().unwrap().to_string()
-                    }) {
-                        info!("Found row to update with rowid: {:?}", new_row.cells[i]);
-                        for (j, col_name) in new_row.cols.iter().enumerate() {
-                            table[index].get_mut(col_name).map(|v| 
-                                *v = new_row.cells[j].as_ref().map_or("NULL".to_string(), |c| c.to_string())
-                            );
+            let new_row = tuple_table_slot_to_row(plan_slot);
+            if let Some(rowid_val) = new_row
+                .cols
+                .iter()
+                .enumerate()
+                .find_map(|(i, col)| {
+                    if col == utils::ROWID {
+                        Some(new_row.cells[i].as_ref()?.to_string())
+                    } else {
+                        None
+                    }
+                })
+            {
+                if let Some(index) = table.iter().position(|map| {
+                    map.get(utils::ROWID)
+                        .map(|v| v == &rowid_val)
+                        .unwrap_or(false)
+                }) {
+                    log!("Found row to update with rowid: {:?}", rowid_val);
+                    
+                    let target_row = &mut table[index];
+                    for (col_name, cell) in new_row.cols.iter().zip(new_row.cells.iter()) {
+                        let value = cell.as_ref().map_or("NULL".to_string(), |c| c.to_string());
+                        if let Some(entry) = target_row.get_mut(col_name) {
+                            *entry = value;
                         }
                     }
-                    break;
                 }
             }
         });
