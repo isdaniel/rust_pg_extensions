@@ -1,6 +1,6 @@
 use std::{ffi::c_void, ptr};
 use csv::StringRecord;
-use pgrx::{ list::{self}, pg_sys::{Const, Expr, NodeTag, Var}, prelude::*, AllocatedByRust, PgBox };
+use pgrx::{ prelude::*, AllocatedByRust, PgBox };
 use crate::fdw::{csv_fdw::state::get_csv_reader, utils_share::{utils::{
         build_attr_name_to_index_map, build_header_index_map, deserialize_from_list, exec_clear_tuple, get_datum, get_foreign_table_options, serialize_to_list, string_to_cstr, tuple_desc_attr
     }}};
@@ -99,7 +99,7 @@ unsafe extern "C-unwind" fn get_foreign_plan(
 #[pg_guard]
 extern "C-unwind" fn begin_foreign_scan(
     node: *mut pg_sys::ForeignScanState,
-    eflags: ::std::os::raw::c_int,
+    _eflags: ::std::os::raw::c_int,
 ) {
 
     log!("---> begin_foreign_scan");

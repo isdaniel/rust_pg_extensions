@@ -420,14 +420,19 @@ extern "C-unwind" fn exec_foreign_delete(
         let state = PgBox::<FdwModifyState>::from_pg((*rinfo).ri_FdwState as _);
         let mut table = MEMORY_TABLE.write().unwrap();
         PgMemoryContexts::For(state.tmp_ctx).switch_to(|_| {
-            let cell = get_rowid_cell(&state, plan_slot);
-            info!("cell :{:?}",cell);
-            if let Some(rowid) = cell {
-                let row_key = rowid.to_string();
-                if let Some(index) = table.iter().position(|map| map.get(&state.rowid_name) == Some(&row_key)) {
+            let rowid_cell  = get_rowid_cell(&state, plan_slot);
+            log!("cell :{:?}",rowid_cell );
+            let Some(rowid) = rowid_cell else {
+                return;
+            };
+            let row_key = rowid.to_string();
+            match table.iter().position(|map| map.get(&state.rowid_name) == Some(&row_key)) {
+                Some(index) => {
                     table.remove(index);
-                } else {
-                    info!("Row with id {} not found for deletion", rowid);
+                    log!("Deleted row with id {} at index {}", row_key, index);
+                }
+                None => {
+                    log!("Row with id {} not found for deletion", rowid);
                 }
             }
         });
