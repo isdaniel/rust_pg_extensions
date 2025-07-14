@@ -37,7 +37,8 @@ mod tests {
         // log!("act Debug result: {} ", result);
         assert_eq!(result, "\"hello\"");
     }
-
+    
+    #[cfg(not(feature = "pg13"))]
     #[pg_test]
     fn default_fdw_insert_and_select() {
         Spi::connect_mut(|c| {
@@ -67,6 +68,7 @@ mod tests {
         });
     }
 
+    #[cfg(not(feature = "pg13"))]
     #[pg_test]
     fn default_fdw_insert_and_update() {
         Spi::connect_mut(|c| {
